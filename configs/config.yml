@@ -1,0 +1,18 @@
+#proxy_url: "http://proxy.example.com:8080"
+port: 8000
+rate_limit:
+  rate: 5
+  burst: 10
+target_map:
+  "/chat/completions": "https://ark.cn-beijing.volces.com/api/v3"
+  "/v1/search": "https://api.firecrawl.dev"
+  "/embeddings": "https://open.bigmodel.cn/api/paas/v4"
+  "/v1/embeddings": "http://10.236.50.39:10032"
+model_routes:
+  "gpt-4": "https://api.openai.com/v1"
+  "gpt-3.5-turbo": "https://api.openai.com/v1"
+  "claude-3-opus-20240229": "https://api.anthropic.com/v1"
+  "embedding-2":
+    urls:
+      - "https://open.bigmodel.cn/api/paas/v3"
+      - "https://open.bigmodel.cn/api/paas/v4"
