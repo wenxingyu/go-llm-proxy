@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -51,4 +52,22 @@ func GetOrGenerateRequestID(r *http.Request) string {
 		r.Header.Set("X-Request-ID", requestId)
 	}
 	return requestId
+}
+
+// ReadRequestBody 读取请求体并返回字节数组，同时保持请求体可重复读取
+func ReadRequestBody(r *http.Request) ([]byte, error) {
+	if r == nil || r.Body == nil {
+		return nil, fmt.Errorf("request or request body is nil")
+	}
+
+	// 读取请求体
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read request body: %w", err)
+	}
+
+	// 重新设置请求体，使其可以重复读取
+	r.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
+
+	return bodyBytes, nil
 }

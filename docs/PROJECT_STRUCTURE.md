@@ -58,6 +58,8 @@ go-llm-proxy/
 - 支持不同环境的配置（开发、测试、生产）
 - 配置文件使用YAML格式
 - **新增负载均衡配置支持**：可为模型配置多个baseurl
+- **新增日志配置支持**：可控制是否记录请求体到日志
+- **新增CORS支持**：自动处理OPTIONS预检请求
 
 ### internal/ - 内部包
 - **internal/config/**: 配置管理，负责加载和解析配置文件
@@ -67,6 +69,8 @@ go-llm-proxy/
   - `handler.go`: HTTP请求处理逻辑，集成策略模式
     - 支持404错误处理
     - 使用策略模式进行URL路由
+    - 自动处理OPTIONS预检请求
+    - 支持请求体日志记录
   - `stratgy.go`: URL路由策略实现（策略模式）
     - `URLRouteStrategy` 接口定义
     - `ModelSpecifyStrategy`: 模型特定路由策略
@@ -83,6 +87,9 @@ go-llm-proxy/
 - **internal/database/**: 数据库相关功能（预留）
 - **internal/utils/**: 工具函数
   - `ip_utils.go`: IP地址处理、DNS缓存等工具函数
+  - `http_utils.go`: HTTP请求处理工具函数
+    - 请求体读取和重复读取支持
+    - 请求ID生成和管理
 
 ### pkg/ - 公共包
 - **pkg/logger/**: 日志管理包
@@ -151,6 +158,11 @@ go build -o go-llm-proxy.exe ./cmd/server
 
 ### 配置示例
 ```yaml
+# 基础配置
+port: 8000
+log_body: false  # 是否记录请求体到日志
+
+# 模型路由配置
 model_routes:
   # 单个URL配置（向后兼容）
   "gpt-4": "https://api.openai.com/v1"
@@ -167,6 +179,8 @@ model_routes:
 - **RoundRobin轮询**: 在多个URL间轮询分发请求
 - **线程安全**: 使用原子操作和读写锁
 - **策略模式**: 支持多种URL路由策略
+- **CORS支持**: 自动处理OPTIONS预检请求
+- **请求体日志**: 可配置是否记录请求体内容
 
 ## 🎯 策略模式设计
 

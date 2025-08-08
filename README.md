@@ -10,6 +10,7 @@
 - **负载均衡**: 支持多个API端点的轮询负载均衡
 - **路径映射**: 支持自定义路径到目标服务的映射
 - **智能代理选择**: 自动判断是否需要使用代理（内网直连，外网代理）
+- **CORS支持**: 自动处理OPTIONS预检请求，支持跨域访问
 
 ### 高级特性
 - **DNS缓存**: 智能DNS缓存机制，减少DNS查询开销
@@ -17,6 +18,7 @@
 - **请求追踪**: 完整的请求ID追踪和性能监控
 - **错误处理**: 完善的错误处理和日志记录
 - **YAML配置**: 支持YAML配置文件
+- **请求体日志**: 可配置是否记录请求体内容到日志中
 
 ## 📋 支持的模型和服务
 
@@ -77,6 +79,7 @@ port: 8000                                    # 服务监听端口
 rate_limit:                                   # 可选：限流配置
   rate: 5                                     # 每秒允许的请求数
   burst: 10                                   # 令牌桶最大突发数
+log_body: false                               # 是否记录请求体到日志（可选）
 
 target_map:
   "/chat/completions": "https://ark.cn-beijing.volces.com/api/v3"
@@ -88,6 +91,7 @@ model_routes:
   "gpt-4": "https://api.openai.com/v1"
   "gpt-3.5-turbo": "https://api.openai.com/v1"
   "claude-3-opus-20240229": "https://api.anthropic.com/v1"
+  "qwen3-235b-a22b-instruct-2507": "https://dashscope.aliyuncs.com/compatible-mode/v1"
   "embedding-2":
     urls:
       - "https://open.bigmodel.cn/api/paas/v3"
@@ -103,6 +107,7 @@ model_routes:
 | `rate_limit` | map    | 限流配置（可选）             | -      |
 | └─ `rate`    | int    | 每秒允许的请求数             | 0      |
 | └─ `burst`   | int    | 令牌桶最大突发数             | 0      |
+| `log_body`   | bool   | 是否记录请求体到日志（调试用） | false  |
 | `target_map` | map    | 路径到目标服务的映射         | -      |
 | `model_routes`| map   | 模型到API服务的路由          | -      |
 
@@ -162,6 +167,24 @@ curl -X POST http://localhost:8000/chat/completions \
   }'
 ```
 
+### CORS预检请求
+
+代理服务器自动处理OPTIONS预检请求，返回以下响应头：
+
+```
+HTTP/1.1 200 OK
+Vary: Origin,Access-Control-Request-Method,Access-Control-Request-Headers
+Allow: POST,OPTIONS
+Accept-Patch: 
+Content-Length: 0
+Req-Cost-Time: 3
+Req-Arrive-Time: 1754658754213
+Resp-Start-Time: 1754658754216
+X-Envoy-Upstream-Service-Time: 2
+Date: Fri, 08 Aug 2025 13:12:34 GMT
+Server: istio-envoy
+```
+
 ### 嵌入请求
 
 ```bash
@@ -198,6 +221,9 @@ curl -X POST http://localhost:8000/v1/search \
 - `status`: 响应状态码
 - `latency`: 请求处理时间
 - `model`: 使用的模型名称（如果适用）
+- `request_body`: 请求体内容（当 `log_body: true` 时记录）
+- `target_url`: 目标URL地址
+- `content_length`: 请求内容长度
 
 ### 监控指标
 - 请求处理时间

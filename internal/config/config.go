@@ -26,6 +26,7 @@ type Config struct {
 	ModelRoutes map[string]interface{} `yaml:"model_routes"` // 支持字符串或ModelRoute
 	Port        int                    `yaml:"port"`
 	RateLimit   RateLimitConfig        `yaml:"rate_limit"`
+	LogBody     bool                   `yaml:"log_body"` // 是否记录请求体
 }
 
 // LoadConfig 加载配置文件

@@ -125,14 +125,32 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Info("Request received",
+	logFields := []zap.Field{
 		zap.String("requestId", requestId),
 		zap.String("clientIp", clientIP),
 		zap.String("path", r.URL.Path),
 		zap.String("method", r.Method),
 		zap.String("targetUrl", r.URL.String()),
 		zap.Int("Content-length", int(r.ContentLength)),
-	)
+	}
+
+	if h.cfg.LogBody && r.Body != nil {
+		bodyBytes, err := utils.ReadRequestBody(r)
+		if err == nil {
+			logFields = append(logFields, zap.String("requestBody", string(bodyBytes)))
+		} else {
+			logger.Warn("Failed to read request body", zap.Error(err))
+		}
+	}
+
+	logger.Info("Request received", logFields...)
+
+	if r.Method == "OPTIONS" {
+		w.Header().Set("Vary", "Origin,Access-Control-Request-Method,Access-Control-Request-Headers")
+		w.Header().Set("Allow", "POST,OPTIONS")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 
 	// 校验路径
 	if _, ok := h.cfg.TargetMap[r.URL.Path]; !ok {

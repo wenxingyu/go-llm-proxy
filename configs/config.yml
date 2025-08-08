@@ -3,6 +3,7 @@ port: 8000
 rate_limit:
   rate: 5
   burst: 10
+log_body: false
 target_map:
   "/chat/completions": "https://ark.cn-beijing.volces.com/api/v3"
   "/v1/search": "https://api.firecrawl.dev"
@@ -12,6 +13,7 @@ model_routes:
   "gpt-4": "https://api.openai.com/v1"
   "gpt-3.5-turbo": "https://api.openai.com/v1"
   "claude-3-opus-20240229": "https://api.anthropic.com/v1"
+  "qwen3-235b-a22b-instruct-2507": "https://dashscope.aliyuncs.com/compatible-mode/v1"
   "embedding-2":
     urls:
       - "https://open.bigmodel.cn/api/paas/v3"

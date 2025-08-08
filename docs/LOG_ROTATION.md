@@ -79,6 +79,41 @@ encoderConfig := zapcore.EncoderConfig{
 {"level":"ERROR","time":"2025-06-26T23:57:07.549+0800","caller":"test_log.go:22","msg":"这是来自testFunction2的错误日志"}
 ```
 
+### 请求日志配置
+
+#### 请求体记录控制
+
+在 `configs/config.yml` 中可以通过 `log_body` 参数控制是否记录请求体：
+
+```yaml
+log_body: false  # 默认不记录请求体
+```
+
+- **`log_body: true`**: 记录请求体内容到日志中，便于调试
+- **`log_body: false`**: 不记录请求体，保护敏感信息（默认值）
+
+#### 请求日志字段
+
+当记录请求时，日志包含以下字段：
+
+```json
+{
+  "level": "INFO",
+  "time": "2025-06-26T23:57:07.544+0800",
+  "caller": "handler.go:125",
+  "msg": "Request received",
+  "requestId": "550e8400-e29b-41d4-a716-446655440000",
+  "clientIp": "192.168.1.100",
+  "path": "/chat/completions",
+  "method": "POST",
+  "targetUrl": "http://localhost:8000/chat/completions",
+  "Content-length": 256,
+  "requestBody": "{\"model\":\"gpt-4\",\"messages\":[...]}"  // 仅当 log_body: true 时记录
+}
+```
+
+**注意**: 在生产环境中建议设置 `log_body: false` 以避免记录敏感信息。
+
 ### 调用位置显示
 
 系统使用 `zap.AddCallerSkip(1)` 配置，确保日志显示真实的调用位置：
