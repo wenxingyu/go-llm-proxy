@@ -145,13 +145,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	logger.Info("Request received", logFields...)
 
-	if r.Method == "OPTIONS" {
-		w.Header().Set("Vary", "Origin,Access-Control-Request-Method,Access-Control-Request-Headers")
-		w.Header().Set("Allow", "POST,OPTIONS")
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
 	// 校验路径
 	if _, ok := h.cfg.TargetMap[r.URL.Path]; !ok {
 		logger.Warn("Path not found, returning 404",

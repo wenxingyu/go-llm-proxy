@@ -3,9 +3,10 @@ port: 8000
 rate_limit:
   rate: 5
   burst: 10
-log_body: false
+log_body: true
 target_map:
-  "/chat/completions": "https://ark.cn-beijing.volces.com/api/v3"
+  "/": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+  "/chat/completions": "https://dashscope.aliyuncs.com/compatible-mode/v1"
   "/v1/search": "https://api.firecrawl.dev"
   "/embeddings": "https://open.bigmodel.cn/api/paas/v4"
   "/v1/embeddings": "http://10.236.50.39:10032"
@@ -14,6 +15,7 @@ model_routes:
   "gpt-3.5-turbo": "https://api.openai.com/v1"
   "claude-3-opus-20240229": "https://api.anthropic.com/v1"
   "qwen3-235b-a22b-instruct-2507": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  "deepseek-v3-250324": "https://ark.cn-beijing.volces.com/api/v3"
   "embedding-2":
     urls:
       - "https://open.bigmodel.cn/api/paas/v3"
