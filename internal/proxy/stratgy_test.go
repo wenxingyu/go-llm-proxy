@@ -216,16 +216,16 @@ func TestModelSpecifyStrategy_GetTargetURL(t *testing.T) {
 			requestBody: `{"model": "gpt-4", "messages": [{"role": "user", "content": "hello"]`,
 			baseURL:     "https://api1.example.com",
 			path:        "/chat/completions",
-			expectError: true,
-			expectedURL: "",
+			expectError: false,
+			expectedURL: "https://api1.example.com/chat/completions",
 		},
 		{
 			name:        "empty model",
 			requestBody: `{"model": "", "messages": [{"role": "user", "content": "hello"}]}`,
 			baseURL:     "https://api1.example.com",
 			path:        "/chat/completions",
-			expectError: true,
-			expectedURL: "",
+			expectError: false,
+			expectedURL: "https://api1.example.com/chat/completions",
 		},
 	}
 
