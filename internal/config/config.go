@@ -27,6 +27,20 @@ type Config struct {
 	Port        int                    `yaml:"port"`
 	RateLimit   RateLimitConfig        `yaml:"rate_limit"`
 	LogBody     bool                   `yaml:"log_body"` // 是否记录请求体
+	Database    DatabaseConfig         `yaml:"database"`
+}
+
+// DatabaseConfig 数据库配置
+type DatabaseConfig struct {
+	Host            string `yaml:"host"`
+	Port            int    `yaml:"port"`
+	User            string `yaml:"user"`
+	Password        string `yaml:"password"`
+	DBName          string `yaml:"dbname"`
+	SSLMode         string `yaml:"sslmode"`           // disable, require, verify-ca, verify-full
+	MaxOpenConns    int    `yaml:"max_open_conns"`    // 最大打开连接数
+	MaxIdleConns    int    `yaml:"max_idle_conns"`    // 最大空闲连接数
+	ConnMaxLifetime int    `yaml:"conn_max_lifetime"` // 连接最长生命周期（秒）
 }
 
 // LoadConfig 加载配置文件

@@ -4,6 +4,16 @@ rate_limit:
   rate: 5
   burst: 10
 log_body: true
+database:
+  host: "127.0.0.1"
+  port: 5432
+  user: "postgres"
+  password: "postgres"
+  dbname: "go_llm"
+  sslmode: "disable"
+  max_open_conns: 10
+  max_idle_conns: 5
+  conn_max_lifetime: 600
 target_map:
   "/": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
   "/chat/completions": "https://dashscope.aliyuncs.com/compatible-mode/v1"
