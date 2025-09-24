@@ -58,7 +58,15 @@ func NewPostgres(cfg config.DatabaseConfig) (*Postgres, error) {
 		zap.String("db", cfg.DBName),
 	)
 
-	return &Postgres{Pool: pool}, nil
+	pg := &Postgres{Pool: pool}
+
+	// Ensure required tables exist
+	if err := pg.createTables(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("failed to create tables: %w", err)
+	}
+
+	return pg, nil
 }
 
 // Close closes the pool
@@ -68,32 +76,73 @@ func (p *Postgres) Close() {
 	}
 }
 
-// InsertLLMLog inserts a row into the logs table with id, query, response, model_name, create_at
+// InsertLLMLog inserts a row into the logs table with request, response, model_name
 // Table example schema:
 // CREATE TABLE IF NOT EXISTS llm_logs (
 //
-//	id TEXT PRIMARY KEY,
-//	query TEXT NOT NULL,
+//	id SERIAL PRIMARY KEY,
+//	request TEXT NOT NULL,
 //	response TEXT NOT NULL,
 //	model_name TEXT NOT NULL,
 //	create_at TIMESTAMP NOT NULL DEFAULT NOW()
 //
 // );
-func (p *Postgres) InsertLLMLog(ctx context.Context, id string, query string, response string, modelName string, createAt time.Time) error {
+
+type RequestCache struct {
+	ID        int    `json:"id"`
+	Key       string `json:"key"`
+	Request   string `json:"request"`
+	ModelName string `json:"model_name"`
+	Response  string `json:"response"`
+	CreatedAt string `json:"created_at"`
+}
+
+// createTables ensures required tables exist in public schema
+func (p *Postgres) createTables(ctx context.Context) error {
+	if p == nil || p.Pool == nil {
+		return fmt.Errorf("postgres pool is not initialized")
+	}
+
+	const createRequestCache = `
+CREATE TABLE IF NOT EXISTS public.request_cache (
+    id SERIAL PRIMARY KEY,
+	key TEXT GENERATED ALWAYS AS (md5((request || ':' || model_name))) STORED,
+    request TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    response TEXT NOT NULL,
+    create_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+`
+	// Create request_cache
+	if _, err := p.Pool.Exec(ctx, createRequestCache); err != nil {
+		logger.Error("failed to create table public.request_cache", zap.Error(err))
+		return err
+	}
+
+	return nil
+}
+
+func (p *Postgres) InsertRequestCache(ctx context.Context, log *RequestCache) error {
 	if p == nil || p.Pool == nil {
 		return fmt.Errorf("postgres pool is not initialized")
 	}
 
 	const stmt = `
-INSERT INTO llm_logs (id, query, response, model_name, create_at)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (id) DO NOTHING;
+INSERT INTO public.request_cache (key,request, model_name, response)
+VALUES ($1, $2, $3, $4)
+RETURNING id, key;
 `
 
-	_, err := p.Pool.Exec(ctx, stmt, id, query, response, modelName, createAt)
+	var id int
+	var key string
+	err := p.Pool.QueryRow(ctx, stmt, log.Request, log.ModelName, log.Response).Scan(&id, &key)
 	if err != nil {
 		logger.Error("failed to insert llm log", zap.Error(err))
 		return err
 	}
+
+	// 更新结构体中的 ID/Key
+	log.ID = id
+	// 如果需要，调用方可以自行计算/使用 key；这里不再暴露在结构体上
 	return nil
 }
