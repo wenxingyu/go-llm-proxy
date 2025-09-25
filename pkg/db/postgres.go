@@ -76,18 +76,6 @@ func (p *Postgres) Close() {
 	}
 }
 
-// InsertLLMLog inserts a row into the logs table with request, response, model_name
-// Table example schema:
-// CREATE TABLE IF NOT EXISTS llm_logs (
-//
-//	id SERIAL PRIMARY KEY,
-//	request TEXT NOT NULL,
-//	response TEXT NOT NULL,
-//	model_name TEXT NOT NULL,
-//	create_at TIMESTAMP NOT NULL DEFAULT NOW()
-//
-// );
-
 type RequestCache struct {
 	ID        int    `json:"id"`
 	Key       string `json:"key"`
@@ -106,7 +94,7 @@ func (p *Postgres) createTables(ctx context.Context) error {
 	const createRequestCache = `
 CREATE TABLE IF NOT EXISTS public.request_cache (
     id SERIAL PRIMARY KEY,
-	key TEXT GENERATED ALWAYS AS (md5((request || ':' || model_name))) STORED,
+	key TEXT NOT NULL,
     request TEXT NOT NULL,
     model_name TEXT NOT NULL,
     response TEXT NOT NULL,
@@ -126,16 +114,15 @@ func (p *Postgres) InsertRequestCache(ctx context.Context, log *RequestCache) er
 	if p == nil || p.Pool == nil {
 		return fmt.Errorf("postgres pool is not initialized")
 	}
-
 	const stmt = `
-INSERT INTO public.request_cache (key,request, model_name, response)
+INSERT INTO public.request_cache (key, request, model_name, response)
 VALUES ($1, $2, $3, $4)
 RETURNING id, key;
 `
 
 	var id int
 	var key string
-	err := p.Pool.QueryRow(ctx, stmt, log.Request, log.ModelName, log.Response).Scan(&id, &key)
+	err := p.Pool.QueryRow(ctx, stmt, log.Key, log.Request, log.ModelName, log.Response).Scan(&id, &key)
 	if err != nil {
 		logger.Error("failed to insert llm log", zap.Error(err))
 		return err
@@ -143,6 +130,7 @@ RETURNING id, key;
 
 	// 更新结构体中的 ID/Key
 	log.ID = id
+	log.Key = key
 	// 如果需要，调用方可以自行计算/使用 key；这里不再暴露在结构体上
 	return nil
 }
