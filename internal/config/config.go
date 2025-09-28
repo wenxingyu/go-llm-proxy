@@ -28,6 +28,7 @@ type Config struct {
 	RateLimit   RateLimitConfig        `yaml:"rate_limit"`
 	LogBody     bool                   `yaml:"log_body"` // 是否记录请求体
 	Database    DatabaseConfig         `yaml:"database"`
+	Redis       RedisConfig            `yaml:"redis"`
 }
 
 // DatabaseConfig 数据库配置
@@ -41,6 +42,13 @@ type DatabaseConfig struct {
 	MaxOpenConns    int    `yaml:"max_open_conns"`    // 最大打开连接数
 	MaxIdleConns    int    `yaml:"max_idle_conns"`    // 最大空闲连接数
 	ConnMaxLifetime int    `yaml:"conn_max_lifetime"` // 连接最长生命周期（秒）
+}
+
+// RedisConfig Redis配置
+type RedisConfig struct {
+	Addr     string `yaml:"addr"`
+	Password string `yaml:"password"`
+	DB       int    `yaml:"db"`
 }
 
 // LoadConfig 加载配置文件

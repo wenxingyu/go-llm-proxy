@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"go-llm-server/internal/utils"
 	"time"
 
 	"go-llm-server/internal/config"
@@ -76,61 +77,172 @@ func (p *Postgres) Close() {
 	}
 }
 
-type RequestCache struct {
-	ID        int    `json:"id"`
-	Key       string `json:"key"`
-	Request   string `json:"request"`
-	ModelName string `json:"model_name"`
-	Response  string `json:"response"`
-	CreatedAt string `json:"created_at"`
-}
-
 // createTables ensures required tables exist in public schema
 func (p *Postgres) createTables(ctx context.Context) error {
 	if p == nil || p.Pool == nil {
 		return fmt.Errorf("postgres pool is not initialized")
 	}
-
-	const createRequestCache = `
-CREATE TABLE IF NOT EXISTS public.request_cache (
-    id SERIAL PRIMARY KEY,
-	key TEXT NOT NULL,
-    request TEXT NOT NULL,
-    model_name TEXT NOT NULL,
-    response TEXT NOT NULL,
-    create_at TIMESTAMP NOT NULL DEFAULT NOW()
-);
-`
 	// Create request_cache
-	if _, err := p.Pool.Exec(ctx, createRequestCache); err != nil {
+	if _, err := p.Pool.Exec(ctx, ddl); err != nil {
 		logger.Error("failed to create table public.request_cache", zap.Error(err))
+		return err
+	}
+	return nil
+}
+
+func (p *Postgres) UpsertEmbedding(ctx context.Context, inputText, modelName string, embedding []float64) error {
+	hash := utils.MakeHash(inputText + modelName)
+
+	_, err := p.Pool.Exec(ctx, `
+		INSERT INTO embedding_cache (input_hash, input_text, model_name, embedding)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (input_hash, model_name)
+		DO UPDATE SET embedding = EXCLUDED.embedding, updated_at = NOW()
+	`, hash, inputText, modelName, embedding)
+	if err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (p *Postgres) InsertRequestCache(ctx context.Context, log *RequestCache) error {
-	if p == nil || p.Pool == nil {
-		return fmt.Errorf("postgres pool is not initialized")
-	}
-	const stmt = `
-INSERT INTO public.request_cache (key, request, model_name, response)
-VALUES ($1, $2, $3, $4)
-RETURNING id, key;
-`
+func (p *Postgres) UpsertLLM(ctx context.Context, prompt, modelName string, temperature float32, maxTokens int, response string, tokensUsed int) error {
+	hash := utils.MakeHash(fmt.Sprintf("%s|%s|%f|%d", prompt, modelName, temperature, maxTokens))
 
-	var id int
-	var key string
-	err := p.Pool.QueryRow(ctx, stmt, log.Key, log.Request, log.ModelName, log.Response).Scan(&id, &key)
+	_, err := p.Pool.Exec(ctx, `
+		INSERT INTO llm_cache (request_hash, prompt, model_name, temperature, max_tokens, response, tokens_used)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (request_hash, model_name)
+		DO UPDATE SET response = EXCLUDED.response, tokens_used = EXCLUDED.tokens_used, updated_at = NOW()
+	`, hash, prompt, modelName, temperature, maxTokens, response, tokensUsed)
 	if err != nil {
-		logger.Error("failed to insert llm log", zap.Error(err))
 		return err
 	}
-
-	// 更新结构体中的 ID/Key
-	log.ID = id
-	log.Key = key
-	// 如果需要，调用方可以自行计算/使用 key；这里不再暴露在结构体上
 	return nil
+}
+
+// GetEmbedding retrieves an embedding record by input text and model name
+func (p *Postgres) GetEmbedding(ctx context.Context, inputText, modelName string) (*EmbeddingRecord, error) {
+	hash := utils.MakeHash(inputText + modelName)
+
+	var record EmbeddingRecord
+	err := p.Pool.QueryRow(ctx, `
+		SELECT id, input_hash, input_text, model_name, embedding, created_at, updated_at, expire_at
+		FROM embedding_cache
+		WHERE input_hash = $1 AND model_name = $2
+	`, hash, modelName).Scan(
+		&record.ID, &record.InputHash, &record.InputText, &record.ModelName,
+		&record.Embedding, &record.CreatedAt, &record.UpdatedAt, &record.ExpireAt,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &record, nil
+}
+
+// GetLLM retrieves an LLM record by prompt and parameters
+func (p *Postgres) GetLLM(ctx context.Context, prompt, modelName string, temperature float32, maxTokens int) (*LLMRecord, error) {
+	hash := utils.MakeHash(fmt.Sprintf("%s|%s|%f|%d", prompt, modelName, temperature, maxTokens))
+
+	var record LLMRecord
+	err := p.Pool.QueryRow(ctx, `
+		SELECT id, request_hash, prompt, model_name, temperature, max_tokens, response, tokens_used, created_at, updated_at, expire_at
+		FROM llm_cache
+		WHERE request_hash = $1 AND model_name = $2
+	`, hash, modelName).Scan(
+		&record.ID, &record.RequestHash, &record.Prompt, &record.ModelName,
+		&record.Temperature, &record.MaxTokens, &record.Response, &record.TokensUsed,
+		&record.CreatedAt, &record.UpdatedAt, &record.ExpireAt,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &record, nil
+}
+
+// ListEmbeddings retrieves embedding records with pagination
+func (p *Postgres) ListEmbeddings(ctx context.Context, modelName string, limit, offset int) ([]EmbeddingRecord, error) {
+	query := `
+		SELECT id, input_hash, input_text, model_name, embedding, created_at, updated_at, expire_at
+		FROM embedding_cache
+		WHERE model_name = $1
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3
+	`
+
+	rows, err := p.Pool.Query(ctx, query, modelName, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []EmbeddingRecord
+	for rows.Next() {
+		var record EmbeddingRecord
+		err := rows.Scan(
+			&record.ID, &record.InputHash, &record.InputText, &record.ModelName,
+			&record.Embedding, &record.CreatedAt, &record.UpdatedAt, &record.ExpireAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+
+	return records, rows.Err()
+}
+
+// ListLLMs retrieves LLM records with pagination
+func (p *Postgres) ListLLMs(ctx context.Context, modelName string, limit, offset int) ([]LLMRecord, error) {
+	query := `
+		SELECT id, request_hash, prompt, model_name, temperature, max_tokens, response, tokens_used, created_at, updated_at, expire_at
+		FROM llm_cache
+		WHERE model_name = $1
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3
+	`
+
+	rows, err := p.Pool.Query(ctx, query, modelName, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []LLMRecord
+	for rows.Next() {
+		var record LLMRecord
+		err := rows.Scan(
+			&record.ID, &record.RequestHash, &record.Prompt, &record.ModelName,
+			&record.Temperature, &record.MaxTokens, &record.Response, &record.TokensUsed,
+			&record.CreatedAt, &record.UpdatedAt, &record.ExpireAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+
+	return records, rows.Err()
+}
+
+// CountEmbeddings returns the total count of embedding records for a model
+func (p *Postgres) CountEmbeddings(ctx context.Context, modelName string) (int, error) {
+	var count int
+	err := p.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM embedding_cache WHERE model_name = $1
+	`, modelName).Scan(&count)
+	return count, err
+}
+
+// CountLLMs returns the total count of LLM records for a model
+func (p *Postgres) CountLLMs(ctx context.Context, modelName string) (int, error) {
+	var count int
+	err := p.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM llm_cache WHERE model_name = $1
+	`, modelName).Scan(&count)
+	return count, err
 }
