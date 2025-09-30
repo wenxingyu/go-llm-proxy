@@ -45,13 +45,6 @@ func NewRedis(config *Config) (*Redis, error) {
 	}, nil
 }
 
-// NewRedisFromConfig creates a new Redis client from the main application config
-func NewRedisFromConfig(config interface{}) (*Redis, error) {
-	// This function can be used when you have access to the main config
-	// For now, it's a placeholder that can be implemented based on your needs
-	return nil, fmt.Errorf("not implemented - use NewRedis with RedisConfig directly")
-}
-
 func (r *Redis) Get(ctx context.Context, key string, dest interface{}) (bool, error) {
 	val, err := r.client.Get(ctx, key).Result()
 	if errors.Is(err, redis.Nil) {
