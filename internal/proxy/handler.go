@@ -1,9 +1,11 @@
 package proxy
 
 import (
+	"bytes"
 	"go-llm-server/internal/config"
 	"go-llm-server/internal/utils"
 	"go-llm-server/pkg/logger"
+	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -134,13 +136,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		zap.Int("Content-length", int(r.ContentLength)),
 	}
 
+	var requestBodyBuf bytes.Buffer
 	if h.cfg.LogBody && r.Body != nil {
-		bodyBytes, err := utils.ReadRequestBody(r)
-		if err == nil {
-			logFields = append(logFields, zap.String("requestBody", string(bodyBytes)))
-		} else {
-			logger.Warn("Failed to read request body", zap.Error(err))
-		}
+		r.Body = newTeeReadCloser(r.Body, &requestBodyBuf)
 	}
 
 	logger.Info("Request received", logFields...)
@@ -156,6 +154,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var responseBodyBuf bytes.Buffer
+	multiWriter := io.MultiWriter(w, &responseBodyBuf)
+	w = &teeResponseWriter{ResponseWriter: w, writer: multiWriter}
+
 	// 交给同一个 ReverseProxy 实例处理
 	h.proxy.ServeHTTP(w, r)
+
+	if h.cfg.LogBody {
+		logFields = append(logFields, zap.String("requestBody", requestBodyBuf.String()))
+		logger.Info("Request received", logFields...)
+		logger.Info("Response received", zap.String("Content-Type", w.Header().Get("Content-Type")),
+			zap.String("Content-Encoding", w.Header().Get("Content-Encoding")),
+			zap.String("requestBody", responseBodyBuf.String()))
+	}
+
 }
