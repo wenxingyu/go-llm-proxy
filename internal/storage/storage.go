@@ -8,7 +8,10 @@ import (
 	"go-llm-server/internal/config"
 	"go-llm-server/internal/utils"
 	"go-llm-server/pkg/db"
+	"go-llm-server/pkg/logger"
 	cache "go-llm-server/pkg/redis"
+
+	"go.uber.org/zap"
 )
 
 // Storage composes Postgres and Redis for read-through/write-through caching.
@@ -70,18 +73,31 @@ func (s *Storage) GetEmbedding(ctx context.Context, inputText, modelName string)
 	var rec db.EmbeddingRecord
 	found, err := s.Cache.Get(ctx, key, &rec)
 	if err != nil {
-		return nil, err
-	}
-	if found {
+		// Log error but continue to Postgres - Redis failure shouldn't break the flow
+		logger.Warn("Redis Get failed, falling back to Postgres",
+			zap.String("key", key),
+			zap.String("model", modelName),
+			zap.Error(err))
+	} else if found {
 		return &rec, nil
 	}
 
 	pgRec, err := s.DB.GetEmbedding(ctx, inputText, modelName)
 	if err != nil {
+		logger.Error("Failed to get embedding from Postgres",
+			zap.String("key", key),
+			zap.String("model", modelName),
+			zap.Error(err))
 		return nil, err
 	}
 	if pgRec != nil {
-		_ = s.Cache.Set(ctx, key, pgRec, time.Hour)
+		if err := s.Cache.Set(ctx, key, pgRec, time.Hour); err != nil {
+			// Log cache backfill failure but don't fail the request
+			logger.Warn("Failed to backfill Redis cache for embedding",
+				zap.String("key", key),
+				zap.String("model", modelName),
+				zap.Error(err))
+		}
 	}
 	return pgRec, nil
 }
@@ -93,13 +109,24 @@ func (s *Storage) UpsertEmbedding(ctx context.Context, inputText, modelName stri
 	}
 
 	if err := s.DB.UpsertEmbedding(ctx, inputText, modelName, embedding); err != nil {
+		logger.Error("Failed to upsert embedding to Postgres",
+			zap.String("model", modelName),
+			zap.Int("embedding_size", len(embedding)),
+			zap.Error(err))
 		return err
 	}
 
 	hash := utils.MakeHash(inputText + modelName)
 	key := "embedding:" + hash
 	rec := db.EmbeddingRecord{InputHash: hash, InputText: inputText, ModelName: modelName, Embedding: embedding}
-	return s.Cache.Set(ctx, key, rec, time.Hour)
+	if err := s.Cache.Set(ctx, key, rec, time.Hour); err != nil {
+		// Log cache update failure but don't fail the request since DB write succeeded
+		logger.Warn("Failed to update Redis cache for embedding after DB write",
+			zap.String("key", key),
+			zap.String("model", modelName),
+			zap.Error(err))
+	}
+	return nil
 }
 
 // ---------------- LLM cache ----------------
@@ -116,18 +143,33 @@ func (s *Storage) GetLLM(ctx context.Context, prompt, modelName string, temperat
 	var rec db.LLMRecord
 	found, err := s.Cache.Get(ctx, key, &rec)
 	if err != nil {
-		return nil, err
-	}
-	if found {
+		// Log error but continue to Postgres - Redis failure shouldn't break the flow
+		logger.Warn("Redis Get failed, falling back to Postgres",
+			zap.String("key", key),
+			zap.String("model", modelName),
+			zap.Error(err))
+	} else if found {
 		return &rec, nil
 	}
 
 	pgRec, err := s.DB.GetLLM(ctx, prompt, modelName, temperature, maxTokens)
 	if err != nil {
+		logger.Error("Failed to get LLM response from Postgres",
+			zap.String("key", key),
+			zap.String("model", modelName),
+			zap.Float32("temperature", temperature),
+			zap.Int("max_tokens", maxTokens),
+			zap.Error(err))
 		return nil, err
 	}
 	if pgRec != nil {
-		_ = s.Cache.Set(ctx, key, pgRec, time.Hour)
+		if err := s.Cache.Set(ctx, key, pgRec, time.Hour); err != nil {
+			// Log cache backfill failure but don't fail the request
+			logger.Warn("Failed to backfill Redis cache for LLM",
+				zap.String("key", key),
+				zap.String("model", modelName),
+				zap.Error(err))
+		}
 	}
 	return pgRec, nil
 }
@@ -139,6 +181,12 @@ func (s *Storage) UpsertLLM(ctx context.Context, prompt, modelName string, tempe
 	}
 
 	if err := s.DB.UpsertLLM(ctx, prompt, modelName, temperature, maxTokens, response, tokensUsed); err != nil {
+		logger.Error("Failed to upsert LLM response to Postgres",
+			zap.String("model", modelName),
+			zap.Float32("temperature", temperature),
+			zap.Int("max_tokens", maxTokens),
+			zap.Int("tokens_used", tokensUsed),
+			zap.Error(err))
 		return err
 	}
 
@@ -152,5 +200,12 @@ func (s *Storage) UpsertLLM(ctx context.Context, prompt, modelName string, tempe
 	rec.Temperature = &t
 	rec.MaxTokens = &m
 	rec.TokensUsed = &tu
-	return s.Cache.Set(ctx, key, rec, time.Hour)
+	if err := s.Cache.Set(ctx, key, rec, time.Hour); err != nil {
+		// Log cache update failure but don't fail the request since DB write succeeded
+		logger.Warn("Failed to update Redis cache for LLM after DB write",
+			zap.String("key", key),
+			zap.String("model", modelName),
+			zap.Error(err))
+	}
+	return nil
 }

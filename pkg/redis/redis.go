@@ -15,9 +15,11 @@ type Redis struct {
 }
 
 type Config struct {
-	Addr     string `yaml:"addr"`
-	Password string `yaml:"password"`
-	DB       int    `yaml:"db"`
+	Addr         string `yaml:"addr"`
+	Password     string `yaml:"password"`
+	DB           int    `yaml:"db"`
+	PoolSize     int    `yaml:"pool_size"`      // Maximum number of socket connections
+	MinIdleConns int    `yaml:"min_idle_conns"` // Minimum number of idle connections
 }
 
 // NewRedis creates a new Redis client with the given configuration
@@ -26,10 +28,24 @@ func NewRedis(config *Config) (*Redis, error) {
 		return nil, fmt.Errorf("redis config cannot be nil")
 	}
 
+	// Set default pool size if not configured
+	poolSize := config.PoolSize
+	if poolSize <= 0 {
+		poolSize = 10 // Default pool size
+	}
+
+	// Set default min idle connections if not configured
+	minIdleConns := config.MinIdleConns
+	if minIdleConns <= 0 {
+		minIdleConns = 5 // Default min idle connections
+	}
+
 	rdb := redis.NewClient(&redis.Options{
-		Addr:     config.Addr,
-		Password: config.Password,
-		DB:       config.DB,
+		Addr:         config.Addr,
+		Password:     config.Password,
+		DB:           config.DB,
+		PoolSize:     poolSize,
+		MinIdleConns: minIdleConns,
 	})
 
 	// Test the connection
