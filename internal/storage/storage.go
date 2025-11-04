@@ -132,12 +132,24 @@ func (s *Storage) UpsertEmbedding(ctx context.Context, inputText, modelName stri
 // ---------------- LLM cache ----------------
 
 // GetLLM tries Redis first, then Postgres; on hit from Postgres it backfills Redis.
-func (s *Storage) GetLLM(ctx context.Context, prompt, modelName string, temperature float32, maxTokens int) (*db.LLMRecord, error) {
+func (s *Storage) GetLLM(ctx context.Context, prompt, modelName string, temperature *float32, maxTokens *int) (*db.LLMRecord, error) {
 	if s == nil || s.DB == nil || s.Cache == nil {
 		return nil, fmt.Errorf("storage not initialized")
 	}
 
-	hash := utils.MakeHash(fmt.Sprintf("%s|%s|%f|%d", prompt, modelName, temperature, maxTokens))
+	// 构建哈希时需要处理可选参数
+	var tempStr, tokensStr string
+	if temperature != nil {
+		tempStr = fmt.Sprintf("%f", *temperature)
+	} else {
+		tempStr = "nil"
+	}
+	if maxTokens != nil {
+		tokensStr = fmt.Sprintf("%d", *maxTokens)
+	} else {
+		tokensStr = "nil"
+	}
+	hash := utils.MakeHash(fmt.Sprintf("%s|%s|%s|%s", prompt, modelName, tempStr, tokensStr))
 	key := "llm:" + hash
 
 	var rec db.LLMRecord
@@ -157,8 +169,6 @@ func (s *Storage) GetLLM(ctx context.Context, prompt, modelName string, temperat
 		logger.Error("Failed to get LLM response from Postgres",
 			zap.String("key", key),
 			zap.String("model", modelName),
-			zap.Float32("temperature", temperature),
-			zap.Int("max_tokens", maxTokens),
 			zap.Error(err))
 		return nil, err
 	}
@@ -175,7 +185,7 @@ func (s *Storage) GetLLM(ctx context.Context, prompt, modelName string, temperat
 }
 
 // UpsertLLM writes to Postgres and updates Redis.
-func (s *Storage) UpsertLLM(ctx context.Context, prompt, modelName string, temperature float32, maxTokens int, response string, tokensUsed int) error {
+func (s *Storage) UpsertLLM(ctx context.Context, prompt, modelName string, temperature *float32, maxTokens *int, response string, tokensUsed *int) error {
 	if s == nil || s.DB == nil || s.Cache == nil {
 		return fmt.Errorf("storage not initialized")
 	}
@@ -183,23 +193,33 @@ func (s *Storage) UpsertLLM(ctx context.Context, prompt, modelName string, tempe
 	if err := s.DB.UpsertLLM(ctx, prompt, modelName, temperature, maxTokens, response, tokensUsed); err != nil {
 		logger.Error("Failed to upsert LLM response to Postgres",
 			zap.String("model", modelName),
-			zap.Float32("temperature", temperature),
-			zap.Int("max_tokens", maxTokens),
-			zap.Int("tokens_used", tokensUsed),
 			zap.Error(err))
 		return err
 	}
 
-	hash := utils.MakeHash(fmt.Sprintf("%s|%s|%f|%d", prompt, modelName, temperature, maxTokens))
+	// 构建哈希时需要处理可选参数
+	var tempStr, tokensStr string
+	if temperature != nil {
+		tempStr = fmt.Sprintf("%f", *temperature)
+	} else {
+		tempStr = "nil"
+	}
+	if maxTokens != nil {
+		tokensStr = fmt.Sprintf("%d", *maxTokens)
+	} else {
+		tokensStr = "nil"
+	}
+	hash := utils.MakeHash(fmt.Sprintf("%s|%s|%s|%s", prompt, modelName, tempStr, tokensStr))
 	key := "llm:" + hash
-	rec := db.LLMRecord{RequestHash: hash, Prompt: prompt, ModelName: modelName, Response: response}
-	// include optional fields when available
-	t := temperature
-	m := maxTokens
-	tu := tokensUsed
-	rec.Temperature = &t
-	rec.MaxTokens = &m
-	rec.TokensUsed = &tu
+	rec := db.LLMRecord{
+		RequestHash: hash,
+		Prompt:      prompt,
+		ModelName:   modelName,
+		Response:    response,
+		Temperature: temperature,
+		MaxTokens:   maxTokens,
+		TokensUsed:  tokensUsed,
+	}
 	if err := s.Cache.Set(ctx, key, rec, time.Hour); err != nil {
 		// Log cache update failure but don't fail the request since DB write succeeded
 		logger.Warn("Failed to update Redis cache for LLM after DB write",

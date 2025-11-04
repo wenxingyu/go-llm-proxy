@@ -131,10 +131,10 @@ func TestStorage_LLMFlow(t *testing.T) {
 	tokensUsed := 42
 
 	// Upsert into DB (and cache)
-	require.NoError(t, s.UpsertLLM(ctx, prompt, modelName, temperature, maxTokens, response, tokensUsed))
+	require.NoError(t, s.UpsertLLM(ctx, prompt, modelName, &temperature, &maxTokens, response, &tokensUsed))
 
 	// Read back
-	rec, err := s.GetLLM(ctx, prompt, modelName, temperature, maxTokens)
+	rec, err := s.GetLLM(ctx, prompt, modelName, &temperature, &maxTokens)
 	require.NoError(t, err)
 	require.NotNil(t, rec)
 	assert.Equal(t, prompt, rec.Prompt)
@@ -145,7 +145,10 @@ func TestStorage_LLMFlow(t *testing.T) {
 	}
 
 	// Verify present in Redis
-	key := "llm:" + utils.MakeHash(fmt.Sprintf("%s|%s|%f|%d", prompt, modelName, temperature, maxTokens))
+	var tempStr, tokensStr string
+	tempStr = fmt.Sprintf("%f", temperature)
+	tokensStr = fmt.Sprintf("%d", maxTokens)
+	key := "llm:" + utils.MakeHash(fmt.Sprintf("%s|%s|%s|%s", prompt, modelName, tempStr, tokensStr))
 	rdb := newRawRedis()
 	defer rdb.Close()
 	val, err := rdb.Get(ctx, key).Result()
@@ -163,17 +166,21 @@ func TestStorage_GetLLM_ReadThrough(t *testing.T) {
 	temperature := float32(0.5)
 	maxTokens := 128
 	response := "ok"
+	tokensUsed := 1
 	// Ensure DB has the record
-	require.NoError(t, s.UpsertLLM(ctx, prompt, modelName, temperature, maxTokens, response, 1))
+	require.NoError(t, s.UpsertLLM(ctx, prompt, modelName, &temperature, &maxTokens, response, &tokensUsed))
 
 	// Remove from Redis to test backfill
-	key := "llm:" + utils.MakeHash(fmt.Sprintf("%s|%s|%f|%d", prompt, modelName, temperature, maxTokens))
+	var tempStr, tokensStr string
+	tempStr = fmt.Sprintf("%f", temperature)
+	tokensStr = fmt.Sprintf("%d", maxTokens)
+	key := "llm:" + utils.MakeHash(fmt.Sprintf("%s|%s|%s|%s", prompt, modelName, tempStr, tokensStr))
 	rdb := newRawRedis()
 	defer rdb.Close()
 	_ = rdb.Del(ctx, key).Err()
 
 	// First Get from DB
-	rec, err := s.GetLLM(ctx, prompt, modelName, temperature, maxTokens)
+	rec, err := s.GetLLM(ctx, prompt, modelName, &temperature, &maxTokens)
 	require.NoError(t, err)
 	require.NotNil(t, rec)
 	assert.Equal(t, response, rec.Response)
@@ -182,6 +189,53 @@ func TestStorage_GetLLM_ReadThrough(t *testing.T) {
 	res, err := rdb.Exists(ctx, key).Result()
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), res)
+}
+
+func TestStorage_LLMFlow_WithNilParams(t *testing.T) {
+	s := setupTestStorage(t)
+	defer s.Close()
+
+	ctx := context.Background()
+	prompt := "Test with nil params"
+	modelName := "gpt-4"
+	response := "Response without params"
+
+	// Upsert with nil optional parameters
+	require.NoError(t, s.UpsertLLM(ctx, prompt, modelName, nil, nil, response, nil))
+
+	// Read back with same nil parameters
+	rec, err := s.GetLLM(ctx, prompt, modelName, nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, rec)
+	assert.Equal(t, prompt, rec.Prompt)
+	assert.Equal(t, modelName, rec.ModelName)
+	assert.Equal(t, response, rec.Response)
+	assert.Nil(t, rec.Temperature)
+	assert.Nil(t, rec.MaxTokens)
+	assert.Nil(t, rec.TokensUsed)
+}
+
+func TestStorage_LLMFlow_MixedParams(t *testing.T) {
+	s := setupTestStorage(t)
+	defer s.Close()
+
+	ctx := context.Background()
+	prompt := "Test with mixed params"
+	modelName := "gpt-4"
+	temperature := float32(0.0) // 测试零值和 nil 的区别
+	response := "Response with only temperature"
+
+	// Upsert with only temperature set
+	require.NoError(t, s.UpsertLLM(ctx, prompt, modelName, &temperature, nil, response, nil))
+
+	// Read back
+	rec, err := s.GetLLM(ctx, prompt, modelName, &temperature, nil)
+	require.NoError(t, err)
+	require.NotNil(t, rec)
+	assert.NotNil(t, rec.Temperature)
+	assert.Equal(t, float32(0.0), *rec.Temperature) // 确认 0.0 是有意义的值
+	assert.Nil(t, rec.MaxTokens)
+	assert.Nil(t, rec.TokensUsed)
 }
 
 func TestStorage_Close(t *testing.T) {
