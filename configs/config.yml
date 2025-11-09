@@ -5,18 +5,18 @@ rate_limit:
   burst: 10
 log_body: true
 database:
-  host: "127.0.0.1"
+  host: "192.168.70.128"
   port: 5432
   user: "postgres"
-  password: "postgres"
-  dbname: "go_llm"
+  password: "postgres_password"
+  dbname: "postgres"
   sslmode: "disable"
   max_open_conns: 10
   max_idle_conns: 5
   conn_max_lifetime: 600
 redis:
-  addr: "127.0.0.1:6379"
-  password: ""
+  addr: "192.168.70.128:6379"
+  password: "myredissecret"
   db: 0
 target_map:
   "/": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"

@@ -2,13 +2,20 @@ package proxy
 
 import (
 	"bytes"
+	"compress/gzip"
+	"context"
+	"encoding/json"
 	"go-llm-server/internal/config"
+	stor "go-llm-server/internal/storage"
 	"go-llm-server/internal/utils"
 	"go-llm-server/pkg/logger"
 	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
+	"strings"
+	"unicode/utf8"
 
 	"sync"
 
@@ -22,13 +29,34 @@ type Handler struct {
 	lbManager  *LoadBalancerManager
 	strategies []URLRouteStrategy
 	proxy      *httputil.ReverseProxy
+	storage    *stor.Storage
 
 	ipLimiters sync.Map // map[string]*rate.Limiter
+}
+
+type cacheContextKey struct{}
+
+var llmCacheContextKey = cacheContextKey{}
+
+type llmCacheMetadata struct {
+	prompt      string
+	model       string
+	temperature *float32
+	maxTokens   *int
+	stream      bool
 }
 
 // NewHandler 创建新的代理处理器，并初始化 ReverseProxy 实例
 func NewHandler(cfg *config.Config) *Handler {
 	manager := NewLoadBalancerManager()
+	var storageInstance *stor.Storage
+	if cfg != nil {
+		if s, err := stor.NewStorage(cfg); err != nil {
+			logger.Warn("Failed to initialize storage, LLM cache disabled", zap.Error(err))
+		} else {
+			storageInstance = s
+		}
+	}
 	h := &Handler{
 		cfg:       cfg,
 		lbManager: manager,
@@ -36,6 +64,7 @@ func NewHandler(cfg *config.Config) *Handler {
 			NewModelSpecifyStrategy(manager),
 			NewDefaultStrategy(),
 		},
+		storage: storageInstance,
 	}
 
 	// 构造单例 ReverseProxy
@@ -43,6 +72,9 @@ func NewHandler(cfg *config.Config) *Handler {
 		Director:     h.director,
 		ErrorHandler: h.errorHandler,
 		Transport:    &TransportWithProxyAutoDetected{},
+		ModifyResponse: func(resp *http.Response) error {
+			return h.modifyResponse(resp)
+		},
 	}
 
 	return h
@@ -154,6 +186,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.shouldUseLLMCache(r) {
+		handled, meta := h.handleLLMCachePreProxy(w, r)
+		if handled {
+			return
+		}
+		if meta != nil {
+			r = r.WithContext(context.WithValue(r.Context(), llmCacheContextKey, meta))
+		}
+	}
+
 	var responseBodyBuf bytes.Buffer
 	multiWriter := io.MultiWriter(w, &responseBodyBuf)
 	w = &teeResponseWriter{ResponseWriter: w, writer: multiWriter}
@@ -169,4 +211,192 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			zap.String("requestBody", responseBodyBuf.String()))
 	}
 
+}
+
+func (h *Handler) shouldUseLLMCache(r *http.Request) bool {
+	return h.storage != nil && r != nil && r.URL.Path == "/chat/completions" && r.Method == http.MethodPost
+}
+
+func (h *Handler) handleLLMCachePreProxy(w http.ResponseWriter, r *http.Request) (bool, *llmCacheMetadata) {
+	if r == nil || r.Body == nil {
+		return false, nil
+	}
+
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		logger.Warn("Failed to read request body for LLM cache lookup",
+			zap.String("requestId", utils.GetRequestID(r)),
+			zap.Error(err))
+		r.Body = io.NopCloser(bytes.NewReader(nil))
+		return false, nil
+	}
+	_ = r.Body.Close()
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
+	if len(bodyBytes) == 0 {
+		return false, nil
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+		logger.Warn("Failed to unmarshal request body for LLM cache lookup",
+			zap.String("requestId", utils.GetRequestID(r)),
+			zap.Error(err))
+	}
+
+	streamBool := false
+	if streamVal, ok := payload["stream"]; ok {
+		if v, ok := streamVal.(bool); ok {
+			streamBool = v
+		} else {
+			return false, nil
+		}
+	}
+	if streamBool {
+		return false, nil
+	}
+
+	model, _ := payload["model"].(string)
+	if model == "" {
+		return false, nil
+	}
+
+	var temperature *float32
+	if v, ok := payload["temperature"]; ok {
+		switch t := v.(type) {
+		case float64:
+			temp := float32(t)
+			temperature = &temp
+		case float32:
+			temp := t
+			temperature = &temp
+		}
+	}
+
+	var maxTokens *int
+	if v, ok := payload["max_tokens"]; ok {
+		switch t := v.(type) {
+		case float64:
+			mt := int(t)
+			maxTokens = &mt
+		case float32:
+			mt := int(t)
+			maxTokens = &mt
+		case int:
+			mt := t
+			maxTokens = &mt
+		}
+	}
+
+	prompt := string(bodyBytes)
+	rec, err := h.storage.GetLLM(r.Context(), prompt, model, temperature, maxTokens)
+	if err != nil {
+		logger.Warn("LLM cache lookup failed",
+			zap.String("requestId", utils.GetRequestID(r)),
+			zap.String("model", model),
+			zap.Error(err))
+	} else if rec != nil && rec.Response != "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-LLM-Cache", "HIT")
+		_, _ = w.Write([]byte(rec.Response))
+		logger.Info("Served response from LLM cache",
+			zap.String("requestId", utils.GetRequestID(r)),
+			zap.String("model", model))
+		return true, nil
+	}
+
+	w.Header().Set("X-LLM-Cache", "MISS")
+
+	return false, &llmCacheMetadata{
+		prompt:      prompt,
+		model:       model,
+		temperature: temperature,
+		maxTokens:   maxTokens,
+		stream:      false,
+	}
+}
+
+func (h *Handler) modifyResponse(resp *http.Response) error {
+	if h.storage == nil || resp == nil || resp.Request == nil {
+		return nil
+	}
+
+	meta, _ := resp.Request.Context().Value(llmCacheContextKey).(*llmCacheMetadata)
+	if meta == nil || meta.stream {
+		return nil
+	}
+
+	if resp.StatusCode != http.StatusOK || resp.Body == nil {
+		return nil
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logger.Warn("Failed to read response body for LLM cache storage",
+			zap.Error(err))
+		return nil
+	}
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
+	if len(bodyBytes) > 0 {
+		resp.ContentLength = int64(len(bodyBytes))
+		resp.Header.Set("Content-Length", strconv.Itoa(len(bodyBytes)))
+	} else {
+		resp.ContentLength = 0
+		resp.Header.Del("Content-Length")
+	}
+
+	bodyToStore := bodyBytes
+	if encoding := resp.Header.Get("Content-Encoding"); encoding != "" {
+		if strings.Contains(strings.ToLower(encoding), "gzip") {
+			gr, err := gzip.NewReader(bytes.NewReader(bodyBytes))
+			if err != nil {
+				logger.Warn("Failed to decompress gzip response for LLM cache",
+					zap.String("model", meta.model),
+					zap.Error(err))
+			} else {
+				var decompressed bytes.Buffer
+				if _, err := io.Copy(&decompressed, gr); err != nil {
+					logger.Warn("Failed to copy decompressed response for LLM cache",
+						zap.String("model", meta.model),
+						zap.Error(err))
+				} else {
+					bodyToStore = decompressed.Bytes()
+				}
+				_ = gr.Close()
+			}
+		}
+	}
+
+	if !utf8.Valid(bodyToStore) {
+		logger.Warn("LLM response is not valid UTF-8, skipping cache",
+			zap.String("model", meta.model))
+		return nil
+	}
+
+	var tokensUsedPtr *int
+	var responsePayload struct {
+		Usage *struct {
+			TotalTokens *int `json:"total_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(bodyToStore, &responsePayload); err == nil {
+		if responsePayload.Usage != nil && responsePayload.Usage.TotalTokens != nil {
+			total := *responsePayload.Usage.TotalTokens
+			tokensUsedPtr = &total
+		}
+	}
+
+	if err := h.storage.UpsertLLM(resp.Request.Context(), meta.prompt, meta.model, meta.temperature, meta.maxTokens, string(bodyToStore), tokensUsedPtr); err != nil {
+		logger.Warn("Failed to store response in LLM cache",
+			zap.String("model", meta.model),
+			zap.Error(err))
+	} else {
+		resp.Header.Set("X-LLM-Cache", "MISS")
+		logger.Info("Stored response in LLM cache",
+			zap.String("model", meta.model))
+	}
+
+	return nil
 }
