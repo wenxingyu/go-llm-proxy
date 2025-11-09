@@ -305,8 +305,6 @@ func (h *Handler) handleLLMCachePreProxy(w http.ResponseWriter, r *http.Request)
 		return true, nil
 	}
 
-	w.Header().Set("X-LLM-Cache", "MISS")
-
 	return false, &llmCacheMetadata{
 		prompt:      prompt,
 		model:       model,
@@ -325,6 +323,8 @@ func (h *Handler) modifyResponse(resp *http.Response) error {
 	if meta == nil || meta.stream {
 		return nil
 	}
+
+	resp.Header.Set("X-LLM-Cache", "MISS")
 
 	if resp.StatusCode != http.StatusOK || resp.Body == nil {
 		return nil
