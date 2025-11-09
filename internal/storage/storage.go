@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"go-llm-server/pkg/logger"
 	cache "go-llm-server/pkg/redis"
 
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 )
 
@@ -166,6 +168,9 @@ func (s *Storage) GetLLM(ctx context.Context, prompt, modelName string, temperat
 
 	pgRec, err := s.DB.GetLLM(ctx, prompt, modelName, temperature, maxTokens)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
 		logger.Error("Failed to get LLM response from Postgres",
 			zap.String("key", key),
 			zap.String("model", modelName),
