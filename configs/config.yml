@@ -1,29 +1,35 @@
 #proxy_url: "http://proxy.example.com:8080"
-port: 8000
+port: ${PORT:8000}
+
 rate_limit:
-  rate: 5
-  burst: 10
-log_body: true
+  rate: ${RATE_LIMIT_RATE:1000}
+  burst: ${RATE_LIMIT_BURST:1000}
+
+log_body: ${LOG_BODY:false}
+
 database:
-  host: "192.168.70.128"
-  port: 5432
-  user: "postgres"
-  password: "postgres_password"
-  dbname: "postgres"
-  sslmode: "disable"
-  max_open_conns: 10
-  max_idle_conns: 5
-  conn_max_lifetime: 600
+  host: ${DB_HOST:127.0.0.1}
+  port: ${DB_PORT:5432}
+  user: ${DB_USER:postgres}
+  password: ${DB_PASSWORD:changme}
+  dbname: ${DB_NAME:postgres}
+  sslmode: ${DB_SSLMODE:disable}
+  max_open_conns: ${DB_MAX_OPEN:10}
+  max_idle_conns: ${DB_MAX_IDLE:5}
+  conn_max_lifetime: ${DB_CONN_TTL:600}
+
 redis:
-  addr: "192.168.70.128:6379"
-  password: "myredissecret"
-  db: 0
+  addr: ${REDIS_ADDR:127.0.0.1:6379}
+  password: ${REDIS_PASSWORD:changme}
+  db: ${REDIS_DB:0}
+
 target_map:
   "/": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
   "/chat/completions": "https://dashscope.aliyuncs.com/compatible-mode/v1"
   "/v1/search": "https://api.firecrawl.dev"
   "/embeddings": "https://open.bigmodel.cn/api/paas/v4"
   "/v1/embeddings": "http://10.236.50.39:10032"
+
 model_routes:
   "gpt-4": "https://api.openai.com/v1"
   "gpt-3.5-turbo": "https://api.openai.com/v1"

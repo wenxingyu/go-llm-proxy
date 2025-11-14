@@ -446,3 +446,300 @@ rate_limit:
 		}
 	})
 }
+
+// TestLoadConfigWithEnvVars tests environment variable overrides
+func TestLoadConfigWithEnvVars(t *testing.T) {
+	// Save original environment variables
+	originalEnv := make(map[string]string)
+	envVars := []string{
+		"PORT", "PROXY_URL", "LOG_BODY",
+		"DATABASE_HOST", "DATABASE_PORT", "DATABASE_USER", "DATABASE_PASSWORD", "DATABASE_DBNAME",
+		"REDIS_ADDR", "REDIS_PASSWORD", "REDIS_DB",
+		"RATE_LIMIT_RATE", "RATE_LIMIT_BURST",
+	}
+	for _, key := range envVars {
+		if val := os.Getenv(key); val != "" {
+			originalEnv[key] = val
+		}
+	}
+
+	// Clean up environment variables after test
+	defer func() {
+		for _, key := range envVars {
+			os.Unsetenv(key)
+		}
+		// Restore original values
+		for key, val := range originalEnv {
+			os.Setenv(key, val)
+		}
+	}()
+
+	t.Run("override port with environment variable", func(t *testing.T) {
+		configData := `
+port: 8000
+`
+		configFile := "test_env_port.yml"
+		if err := os.WriteFile(configFile, []byte(configData), 0644); err != nil {
+			t.Fatalf("failed to create test config file: %v", err)
+		}
+		defer os.Remove(configFile)
+
+		os.Setenv("PORT", "9999")
+		defer os.Unsetenv("PORT")
+
+		config, err := LoadConfig(configFile)
+		if err != nil {
+			t.Fatalf("failed to load config: %v", err)
+		}
+
+		if config.Port != 9999 {
+			t.Errorf("Port = %d, expected 9999 (from environment variable)", config.Port)
+		}
+	})
+
+	t.Run("override proxy_url with environment variable", func(t *testing.T) {
+		configData := `
+proxy_url: "http://default.proxy.com:8080"
+port: 8000
+`
+		configFile := "test_env_proxy.yml"
+		if err := os.WriteFile(configFile, []byte(configData), 0644); err != nil {
+			t.Fatalf("failed to create test config file: %v", err)
+		}
+		defer os.Remove(configFile)
+
+		os.Setenv("PROXY_URL", "http://env.proxy.com:9090")
+		defer os.Unsetenv("PROXY_URL")
+
+		config, err := LoadConfig(configFile)
+		if err != nil {
+			t.Fatalf("failed to load config: %v", err)
+		}
+
+		if config.ProxyURL != "http://env.proxy.com:9090" {
+			t.Errorf("ProxyURL = %s, expected http://env.proxy.com:9090 (from environment variable)", config.ProxyURL)
+		}
+	})
+
+	t.Run("override log_body with environment variable", func(t *testing.T) {
+		configData := `
+log_body: false
+port: 8000
+`
+		configFile := "test_env_log_body.yml"
+		if err := os.WriteFile(configFile, []byte(configData), 0644); err != nil {
+			t.Fatalf("failed to create test config file: %v", err)
+		}
+		defer os.Remove(configFile)
+
+		os.Setenv("LOG_BODY", "true")
+		defer os.Unsetenv("LOG_BODY")
+
+		config, err := LoadConfig(configFile)
+		if err != nil {
+			t.Fatalf("failed to load config: %v", err)
+		}
+
+		if !config.LogBody {
+			t.Errorf("LogBody = %v, expected true (from environment variable)", config.LogBody)
+		}
+	})
+
+	t.Run("override database config with environment variables", func(t *testing.T) {
+		configData := `
+database:
+  host: "localhost"
+  port: 5432
+  user: "default_user"
+  password: "default_pass"
+  dbname: "default_db"
+port: 8000
+`
+		configFile := "test_env_database.yml"
+		if err := os.WriteFile(configFile, []byte(configData), 0644); err != nil {
+			t.Fatalf("failed to create test config file: %v", err)
+		}
+		defer os.Remove(configFile)
+
+		os.Setenv("DATABASE_HOST", "env.db.example.com")
+		os.Setenv("DATABASE_PORT", "3306")
+		os.Setenv("DATABASE_USER", "env_user")
+		os.Setenv("DATABASE_PASSWORD", "env_password")
+		os.Setenv("DATABASE_DBNAME", "env_database")
+		defer func() {
+			os.Unsetenv("DATABASE_HOST")
+			os.Unsetenv("DATABASE_PORT")
+			os.Unsetenv("DATABASE_USER")
+			os.Unsetenv("DATABASE_PASSWORD")
+			os.Unsetenv("DATABASE_DBNAME")
+		}()
+
+		config, err := LoadConfig(configFile)
+		if err != nil {
+			t.Fatalf("failed to load config: %v", err)
+		}
+
+		if config.Database.Host != "env.db.example.com" {
+			t.Errorf("Database.Host = %s, expected env.db.example.com", config.Database.Host)
+		}
+		if config.Database.Port != 3306 {
+			t.Errorf("Database.Port = %d, expected 3306", config.Database.Port)
+		}
+		if config.Database.User != "env_user" {
+			t.Errorf("Database.User = %s, expected env_user", config.Database.User)
+		}
+		if config.Database.Password != "env_password" {
+			t.Errorf("Database.Password = %s, expected env_password", config.Database.Password)
+		}
+		if config.Database.DBName != "env_database" {
+			t.Errorf("Database.DBName = %s, expected env_database", config.Database.DBName)
+		}
+	})
+
+	t.Run("override redis config with environment variables", func(t *testing.T) {
+		configData := `
+redis:
+  addr: "localhost:6379"
+  password: "default_redis_pass"
+  db: 0
+port: 8000
+`
+		configFile := "test_env_redis.yml"
+		if err := os.WriteFile(configFile, []byte(configData), 0644); err != nil {
+			t.Fatalf("failed to create test config file: %v", err)
+		}
+		defer os.Remove(configFile)
+
+		os.Setenv("REDIS_ADDR", "env.redis.example.com:6380")
+		os.Setenv("REDIS_PASSWORD", "env_redis_password")
+		os.Setenv("REDIS_DB", "5")
+		defer func() {
+			os.Unsetenv("REDIS_ADDR")
+			os.Unsetenv("REDIS_PASSWORD")
+			os.Unsetenv("REDIS_DB")
+		}()
+
+		config, err := LoadConfig(configFile)
+		if err != nil {
+			t.Fatalf("failed to load config: %v", err)
+		}
+
+		if config.Redis.Addr != "env.redis.example.com:6380" {
+			t.Errorf("Redis.Addr = %s, expected env.redis.example.com:6380", config.Redis.Addr)
+		}
+		if config.Redis.Password != "env_redis_password" {
+			t.Errorf("Redis.Password = %s, expected env_redis_password", config.Redis.Password)
+		}
+		if config.Redis.DB != 5 {
+			t.Errorf("Redis.DB = %d, expected 5", config.Redis.DB)
+		}
+	})
+
+	t.Run("override rate_limit with environment variables", func(t *testing.T) {
+		configData := `
+rate_limit:
+  rate: 100
+  burst: 200
+port: 8000
+`
+		configFile := "test_env_rate_limit.yml"
+		if err := os.WriteFile(configFile, []byte(configData), 0644); err != nil {
+			t.Fatalf("failed to create test config file: %v", err)
+		}
+		defer os.Remove(configFile)
+
+		os.Setenv("RATE_LIMIT_RATE", "500")
+		os.Setenv("RATE_LIMIT_BURST", "1000")
+		defer func() {
+			os.Unsetenv("RATE_LIMIT_RATE")
+			os.Unsetenv("RATE_LIMIT_BURST")
+		}()
+
+		config, err := LoadConfig(configFile)
+		if err != nil {
+			t.Fatalf("failed to load config: %v", err)
+		}
+
+		if config.RateLimit.Rate != 500 {
+			t.Errorf("RateLimit.Rate = %d, expected 500", config.RateLimit.Rate)
+		}
+		if config.RateLimit.Burst != 1000 {
+			t.Errorf("RateLimit.Burst = %d, expected 1000", config.RateLimit.Burst)
+		}
+		if !config.HasRateLimit() {
+			t.Errorf("expected HasRateLimit to be true")
+		}
+	})
+
+	t.Run("environment variable overrides config file value", func(t *testing.T) {
+		configData := `
+port: 8000
+proxy_url: "http://config.proxy.com:8080"
+log_body: false
+`
+		configFile := "test_env_override.yml"
+		if err := os.WriteFile(configFile, []byte(configData), 0644); err != nil {
+			t.Fatalf("failed to create test config file: %v", err)
+		}
+		defer os.Remove(configFile)
+
+		os.Setenv("PORT", "7777")
+		os.Setenv("PROXY_URL", "http://env.proxy.com:9999")
+		os.Setenv("LOG_BODY", "true")
+		defer func() {
+			os.Unsetenv("PORT")
+			os.Unsetenv("PROXY_URL")
+			os.Unsetenv("LOG_BODY")
+		}()
+
+		config, err := LoadConfig(configFile)
+		if err != nil {
+			t.Fatalf("failed to load config: %v", err)
+		}
+
+		// Environment variables should override config file values
+		if config.Port != 7777 {
+			t.Errorf("Port = %d, expected 7777 (from env, not 8000 from config)", config.Port)
+		}
+		if config.ProxyURL != "http://env.proxy.com:9999" {
+			t.Errorf("ProxyURL = %s, expected http://env.proxy.com:9999 (from env)", config.ProxyURL)
+		}
+		if !config.LogBody {
+			t.Errorf("LogBody = %v, expected true (from env, not false from config)", config.LogBody)
+		}
+	})
+
+	t.Run("config file value used when environment variable not set", func(t *testing.T) {
+		configData := `
+port: 8888
+proxy_url: "http://config.proxy.com:8080"
+log_body: true
+`
+		configFile := "test_env_no_override.yml"
+		if err := os.WriteFile(configFile, []byte(configData), 0644); err != nil {
+			t.Fatalf("failed to create test config file: %v", err)
+		}
+		defer os.Remove(configFile)
+
+		// Ensure environment variables are not set
+		os.Unsetenv("PORT")
+		os.Unsetenv("PROXY_URL")
+		os.Unsetenv("LOG_BODY")
+
+		config, err := LoadConfig(configFile)
+		if err != nil {
+			t.Fatalf("failed to load config: %v", err)
+		}
+
+		// Config file values should be used when env vars are not set
+		if config.Port != 8888 {
+			t.Errorf("Port = %d, expected 8888 (from config file)", config.Port)
+		}
+		if config.ProxyURL != "http://config.proxy.com:8080" {
+			t.Errorf("ProxyURL = %s, expected http://config.proxy.com:8080 (from config file)", config.ProxyURL)
+		}
+		if !config.LogBody {
+			t.Errorf("LogBody = %v, expected true (from config file)", config.LogBody)
+		}
+	})
+}

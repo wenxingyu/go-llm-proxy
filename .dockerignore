@@ -1,0 +1,13 @@
+# Docker构建文件，不需要复制到镜像中
+Dockerfile
+build_docker.sh
+.dockerignore
+
+# 日志文件
+logs/*.log
+*.log
+
+# 临时文件
+*.tmp
+*.swp
+*~

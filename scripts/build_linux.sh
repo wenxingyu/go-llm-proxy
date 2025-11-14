@@ -67,13 +67,24 @@ fi
 if [ -f "LICENSE" ]; then
     cp LICENSE dist/
 fi
+if [ -f "Dockerfile" ]; then
+    cp Dockerfile dist/
+    echo -e "${GREEN}Dockerfile copied to dist/${NC}"
+fi
+if [ -f "scripts/build_docker.sh" ]; then
+    cp scripts/build_docker.sh dist/
+    chmod +x dist/build_docker.sh
+    echo -e "${GREEN}build_docker.sh copied to dist/${NC}"
+fi
+if [ -f ".dockerignore" ]; then
+    cp .dockerignore dist/
+    echo -e "${GREEN}.dockerignore copied to dist/${NC}"
+fi
 
-# 创建logs目录
-echo -e "${BLUE}Creating logs directory...${NC}"
-mkdir -p dist/logs
 
 # 设置可执行权限
 chmod +x dist/${APP_NAME}
+chmox +x dist/build_docker.sh
 
 # 显示构建结果
 echo
