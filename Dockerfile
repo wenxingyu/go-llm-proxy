@@ -24,5 +24,7 @@ VOLUME ["/app/go-llm-proxy/config", "/app/go-llm-proxy/log"]
 # 将项目文件拷贝到容器中（如有需要可按实际情况调整）
 COPY . /app/go-llm-proxy
 
+RUN chmod +x go-llm-proxy
+
 # 默认启动命令（可根据实际应用调整）
 CMD ["./go-llm-proxy"]

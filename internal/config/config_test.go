@@ -476,7 +476,7 @@ func TestLoadConfigWithEnvVars(t *testing.T) {
 
 	t.Run("override port with environment variable", func(t *testing.T) {
 		configData := `
-port: 8000
+port: ${PORT:-8000}
 `
 		configFile := "test_env_port.yml"
 		if err := os.WriteFile(configFile, []byte(configData), 0644); err != nil {
@@ -499,7 +499,7 @@ port: 8000
 
 	t.Run("override proxy_url with environment variable", func(t *testing.T) {
 		configData := `
-proxy_url: "http://default.proxy.com:8080"
+proxy_url: "${PROXY_URL:-http://default.proxy.com:8080}"
 port: 8000
 `
 		configFile := "test_env_proxy.yml"
@@ -523,7 +523,7 @@ port: 8000
 
 	t.Run("override log_body with environment variable", func(t *testing.T) {
 		configData := `
-log_body: false
+log_body: ${LOG_BODY:-false}
 port: 8000
 `
 		configFile := "test_env_log_body.yml"
@@ -548,11 +548,15 @@ port: 8000
 	t.Run("override database config with environment variables", func(t *testing.T) {
 		configData := `
 database:
-  host: "localhost"
-  port: 5432
-  user: "default_user"
-  password: "default_pass"
-  dbname: "default_db"
+  host: ${DB_HOST:-127.0.0.1}
+  port: ${DB_PORT:-5432}
+  user: ${DB_USER:-postgres}
+  password: ${DB_PASSWORD:-changme}
+  dbname: ${DB_NAME:-postgres}
+  sslmode: ${DB_SSLMODE:-disable}
+  max_open_conns: ${DB_MAX_OPEN:-10}
+  max_idle_conns: ${DB_MAX_IDLE:-5}
+  conn_max_lifetime: ${DB_CONN_TTL:-600}
 port: 8000
 `
 		configFile := "test_env_database.yml"
@@ -561,17 +565,17 @@ port: 8000
 		}
 		defer os.Remove(configFile)
 
-		os.Setenv("DATABASE_HOST", "env.db.example.com")
-		os.Setenv("DATABASE_PORT", "3306")
-		os.Setenv("DATABASE_USER", "env_user")
-		os.Setenv("DATABASE_PASSWORD", "env_password")
-		os.Setenv("DATABASE_DBNAME", "env_database")
+		os.Setenv("DB_HOST", "env.db.example.com")
+		os.Setenv("DB_PORT", "3306")
+		os.Setenv("DB_USER", "env_user")
+		os.Setenv("DB_PASSWORD", "env_password")
+		os.Setenv("DB_NAME", "env_database")
 		defer func() {
-			os.Unsetenv("DATABASE_HOST")
-			os.Unsetenv("DATABASE_PORT")
-			os.Unsetenv("DATABASE_USER")
-			os.Unsetenv("DATABASE_PASSWORD")
-			os.Unsetenv("DATABASE_DBNAME")
+			os.Unsetenv("DB_HOST")
+			os.Unsetenv("DB_PORT")
+			os.Unsetenv("DB_USER")
+			os.Unsetenv("DB_PASSWORD")
+			os.Unsetenv("DB_DBNAME")
 		}()
 
 		config, err := LoadConfig(configFile)
@@ -599,9 +603,9 @@ port: 8000
 	t.Run("override redis config with environment variables", func(t *testing.T) {
 		configData := `
 redis:
-  addr: "localhost:6379"
-  password: "default_redis_pass"
-  db: 0
+  addr: ${REDIS_ADDR:-127.0.0.1:6379}
+  password: ${REDIS_PASSWORD:-changme}
+  db: ${REDIS_DB:-0}
 port: 8000
 `
 		configFile := "test_env_redis.yml"
@@ -638,8 +642,8 @@ port: 8000
 	t.Run("override rate_limit with environment variables", func(t *testing.T) {
 		configData := `
 rate_limit:
-  rate: 100
-  burst: 200
+  rate: ${RATE_LIMIT_RATE:-1000}
+  burst: ${RATE_LIMIT_BURST:-1000}
 port: 8000
 `
 		configFile := "test_env_rate_limit.yml"
@@ -673,9 +677,9 @@ port: 8000
 
 	t.Run("environment variable overrides config file value", func(t *testing.T) {
 		configData := `
-port: 8000
-proxy_url: "http://config.proxy.com:8080"
-log_body: false
+port: ${PORT:-8000}
+proxy_url: "${PROXY_URL:-http://default.proxy.com:8080}"
+log_body: ${LOG_BODY:-false}
 `
 		configFile := "test_env_override.yml"
 		if err := os.WriteFile(configFile, []byte(configData), 0644); err != nil {

@@ -1,57 +1,72 @@
 package config
 
 import (
-	"fmt"
 	"go-llm-server/pkg/logger"
 	"os"
-	"strings"
+	"regexp"
 
 	"go.uber.org/zap"
-
-	"github.com/mitchellh/mapstructure"
-	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
 
 // ModelRoute 模型路由配置
 type ModelRoute struct {
-	URLs []string `mapstructure:"urls"`
+	URLs []string `yaml:"urls"`
 }
 
 type RateLimitConfig struct {
-	Rate  int `mapstructure:"rate"`
-	Burst int `mapstructure:"burst"`
+	Rate  int `yaml:"rate"`
+	Burst int `yaml:"burst"`
 }
 
+// Config 应用配置结构
 type Config struct {
-	ProxyURL    string                 `mapstructure:"proxy_url"`
-	TargetMap   map[string]string      `mapstructure:"target_map"`
-	ModelRoutes map[string]interface{} `mapstructure:"model_routes"`
-	Port        int                    `mapstructure:"port"`
-	RateLimit   RateLimitConfig        `mapstructure:"rate_limit"`
-	LogBody     bool                   `mapstructure:"log_body"`
-	Database    DatabaseConfig         `mapstructure:"database"`
-	Redis       RedisConfig            `mapstructure:"redis"`
+	ProxyURL    string                 `yaml:"proxy_url"`
+	TargetMap   map[string]string      `yaml:"target_map"`
+	ModelRoutes map[string]interface{} `yaml:"model_routes"` // 支持字符串或ModelRoute
+	Port        int                    `yaml:"port"`
+	RateLimit   RateLimitConfig        `yaml:"rate_limit"`
+	LogBody     bool                   `yaml:"log_body"` // 是否记录请求体
+	Database    DatabaseConfig         `yaml:"database"`
+	Redis       RedisConfig            `yaml:"redis"`
 }
 
 // DatabaseConfig 数据库配置
 type DatabaseConfig struct {
-	Host            string `mapstructure:"host"`
-	Port            int    `mapstructure:"port"`
-	User            string `mapstructure:"user"`
-	Password        string `mapstructure:"password"`
-	DBName          string `mapstructure:"dbname"`
-	SSLMode         string `mapstructure:"sslmode"`
-	MaxOpenConns    int    `mapstructure:"max_open_conns"`
-	MaxIdleConns    int    `mapstructure:"max_idle_conns"`
-	ConnMaxLifetime int    `mapstructure:"conn_max_lifetime"`
+	Host            string `yaml:"host"`
+	Port            int    `yaml:"port"`
+	User            string `yaml:"user"`
+	Password        string `yaml:"password"`
+	DBName          string `yaml:"dbname"`
+	SSLMode         string `yaml:"sslmode"`           // disable, require, verify-ca, verify-full
+	MaxOpenConns    int    `yaml:"max_open_conns"`    // 最大打开连接数
+	MaxIdleConns    int    `yaml:"max_idle_conns"`    // 最大空闲连接数
+	ConnMaxLifetime int    `yaml:"conn_max_lifetime"` // 连接最长生命周期（秒）
 }
 
 // RedisConfig Redis配置
 type RedisConfig struct {
-	Addr     string `mapstructure:"addr"`
-	Password string `mapstructure:"password"`
-	DB       int    `mapstructure:"db"`
+	Addr     string `yaml:"addr"`
+	Password string `yaml:"password"`
+	DB       int    `yaml:"db"`
+}
+
+var envPattern = regexp.MustCompile(`\$\{([A-Za-z0-9_]+)(:-([^}]+))?}`)
+
+// expandEnvWithDefault implements ${VAR:-default}
+func expandEnvWithDefault(s string) string {
+	return envPattern.ReplaceAllStringFunc(s, func(m string) string {
+		groups := envPattern.FindStringSubmatch(m)
+
+		key := groups[1]
+		def := groups[3] // may be empty
+
+		val, exists := os.LookupEnv(key)
+		if exists && val != "" {
+			return val
+		}
+		return def
+	})
 }
 
 // LoadConfig 加载配置文件
@@ -62,85 +77,20 @@ func LoadConfig(configFile string) (*Config, error) {
 		logger.Info("loading default config file", zap.String("file", configFile))
 	}
 
-	v := viper.New()
-	v.SetConfigFile(configFile)
-
-	// 支持 ENV 覆盖，如 DATABASE_HOST → database.host
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.AutomaticEnv()
-	v.AllowEmptyEnv(true)
-
-	// 读取文件
-	if err := v.ReadInConfig(); err != nil {
+	file, err := os.ReadFile(configFile)
+	if err != nil {
 		return nil, err
 	}
 
-	// Manually extract target_map and model_routes from raw YAML to preserve keys with dots
-	// Viper treats dots as path separators, so we need to read YAML directly
-	var targetMap map[string]string
-	var modelRoutes map[string]interface{}
-	fileData, err := os.ReadFile(configFile)
-	if err == nil {
-		var rawConfig map[string]interface{}
-		if err := yaml.Unmarshal(fileData, &rawConfig); err == nil {
-			// Extract target_map
-			if rawTargetMap, ok := rawConfig["target_map"].(map[string]interface{}); ok {
-				targetMap = make(map[string]string)
-				for k, v := range rawTargetMap {
-					if str, ok := v.(string); ok {
-						targetMap[k] = str
-					}
-				}
-			}
-			// Extract model_routes
-			if rawModelRoutes, ok := rawConfig["model_routes"].(map[string]interface{}); ok {
-				modelRoutes = make(map[string]interface{})
-				for k, v := range rawModelRoutes {
-					modelRoutes[k] = v
-				}
-			}
-		}
+	// Expand env vars with default
+	expanded := expandEnvWithDefault(string(file))
+
+	var config Config
+	if err := yaml.Unmarshal([]byte(expanded), &config); err != nil {
+		return nil, err
 	}
 
-	// 映射到 struct - use viper's Unmarshal to ensure environment variables are applied
-	// First, try to unmarshal without target_map and model_routes to avoid the dot issue
-	var cfg Config
-	// Use a custom decoder to handle the nested structures with environment variables
-	allSettings := v.AllSettings()
-	delete(allSettings, "target_map")
-	delete(allSettings, "model_routes")
-
-	decoderConfig := &mapstructure.DecoderConfig{
-		Result:           &cfg,
-		ErrorUnused:      false,
-		WeaklyTypedInput: true,
-		DecodeHook: mapstructure.ComposeDecodeHookFunc(
-			mapstructure.StringToTimeDurationHookFunc(),
-			mapstructure.StringToSliceHookFunc(","),
-		),
-	}
-	decoder, err := mapstructure.NewDecoder(decoderConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create decoder: %w", err)
-	}
-
-	if err := decoder.Decode(allSettings); err != nil {
-		return nil, fmt.Errorf("decoding failed: %w", err)
-	}
-
-	// Set the manually extracted target_map and model_routes
-	if targetMap != nil {
-		cfg.TargetMap = targetMap
-	}
-	if modelRoutes != nil {
-		cfg.ModelRoutes = modelRoutes
-	}
-
-	return &cfg, nil
-}
-
-type RouteConfig struct {
-	URLs []string
+	return &config, nil
 }
 
 // GetModelURLs 获取模型的URL列表，支持单个URL和多个URL
