@@ -84,7 +84,7 @@ fi
 
 # 设置可执行权限
 chmod +x dist/${APP_NAME}
-chmox +x dist/build_docker.sh
+chmod +x dist/build_docker.sh
 
 # 显示构建结果
 echo
