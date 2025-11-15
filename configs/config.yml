@@ -8,9 +8,9 @@ rate_limit:
 log_body: ${LOG_BODY:-false}
 
 database:
-  host: ${DATABASE_HOST:-127.0.0.1}
-  port: ${DATABASE_HOST:-5432}
-  user: ${DATABASE_HOST:-postgres}
+  host: ${DB_HOST:-127.0.0.1}
+  port: ${DB_PORT:-5432}
+  user: ${DB_USER:-postgres}
   password: ${DB_PASSWORD:-changme}
   dbname: ${DB_NAME:-postgres}
   sslmode: ${DB_SSLMODE:-disable}
