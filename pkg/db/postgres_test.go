@@ -3,12 +3,19 @@ package db
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 
 	"go-llm-server/internal/config"
 	"go-llm-server/internal/utils"
 )
 
+//	image: postgres:17
+//	env:
+//	  POSTGRES_USER: test
+//	  POSTGRES_PASSWORD: test
+//	  POSTGRES_DB: testdb
+//
 // setupTestDB creates a test database connection
 // Note: This requires a running PostgreSQL instance for integration tests
 func setupTestDB(t *testing.T) *Postgres {
@@ -16,11 +23,11 @@ func setupTestDB(t *testing.T) *Postgres {
 	// In a real test environment, you might want to use testcontainers
 	// or a dedicated test database
 	cfg := config.DatabaseConfig{
-		Host:            "192.168.70.128",
+		Host:            os.Getenv("DB_HOST"),
 		Port:            5432,
-		User:            "postgres",
-		Password:        "postgres_password",
-		DBName:          "postgres_test",
+		User:            os.Getenv("DB_USER"),
+		Password:        os.Getenv("DB_PASSWORD"),
+		DBName:          os.Getenv("DB_NAME"),
 		SSLMode:         "disable",
 		MaxOpenConns:    10,
 		MaxIdleConns:    5,

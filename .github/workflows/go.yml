@@ -9,7 +9,12 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    env:
+      DB_HOST: postgres
+      DB_USER: test
+      DB_PASSWORD: test
+      DB_NAME: testdb
+      REDIS_ADDR: redis:6379
     services:
       postgres:
         image: postgres:17

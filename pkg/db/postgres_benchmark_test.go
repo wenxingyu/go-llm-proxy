@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 
 	"go-llm-server/internal/config"
@@ -12,11 +13,11 @@ import (
 // to demonstrate the performance benefit of prepared statements
 func BenchmarkUpsertLLM_WithPreparedStatement(b *testing.B) {
 	cfg := config.DatabaseConfig{
-		Host:            "192.168.70.128",
+		Host:            os.Getenv("DB_HOST"),
 		Port:            5432,
-		User:            "postgres",
-		Password:        "postgres_password",
-		DBName:          "postgres_test",
+		User:            os.Getenv("DB_USER"),
+		Password:        os.Getenv("DB_PASSWORD"),
+		DBName:          os.Getenv("DB_NAME"),
 		SSLMode:         "disable",
 		MaxOpenConns:    10,
 		MaxIdleConns:    5,

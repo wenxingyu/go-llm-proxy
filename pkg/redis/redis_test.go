@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -12,8 +13,8 @@ import (
 
 // Test configuration with the provided Redis connection details
 var testConfig = &Config{
-	Addr:     "192.168.70.128:6379",
-	Password: "myredissecret",
+	Addr:     os.Getenv("REDIS_ADDR"),
+	Password: "",
 	DB:       0,
 }
 
