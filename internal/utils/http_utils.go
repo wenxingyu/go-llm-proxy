@@ -22,6 +22,10 @@ func GetTargetURLWithCache(baseURL, path string) (*url.URL, error) {
 		return cachedURL.(*url.URL), nil
 	}
 
+	if !strings.HasSuffix(baseURL, "/") {
+		baseURL += "/"
+	}
+
 	targetURL, err := url.Parse(baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse target URL: %w", err)
