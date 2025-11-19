@@ -51,11 +51,19 @@ jobs:
       - name: Install deps (optional)
         run: go mod download
 
-      - name: Build
-        run: go build -v cmd/server/main.go
-
       - name: Test
         env:
           DATABASE_URL: postgres://test:test@localhost:5432/testdb?sslmode=disable
           REDIS_URL: redis://localhost:6379
         run: go test -v ./...
+
+      - name: Build Linux Artifacts
+        run: bash scripts/build_linux.sh
+
+      - name: Upload dist as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: dist/
+          compression-level: 9
+          if-no-files-found: error
