@@ -78,7 +78,7 @@ func TestGetTargetURLWithCache(t *testing.T) {
 			name:        "Empty baseURL",
 			baseURL:     "",
 			path:        "/test",
-			expected:    "test",
+			expected:    "/test",
 			expectError: false,
 		},
 		{
