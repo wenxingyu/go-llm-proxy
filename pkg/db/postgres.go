@@ -35,7 +35,7 @@ const (
 	sqlGetLLM = `
 		SELECT id, request_hash, request_id, request, model_name, temperature, max_tokens, response, total_tokens, prompt_tokens, completion_tokens, start_time, end_time, created_at, updated_at, expire_at
 		FROM llm_cache
-		WHERE request_hash = $1 AND model_name = $2`
+		WHERE request_hash = $1`
 
 	sqlListEmbeddings = `
 		SELECT id, input_hash, input_text, model_name, embedding, created_at, updated_at, expire_at
@@ -154,21 +154,9 @@ func (p *Postgres) UpsertLLM(ctx context.Context, rec *LLMRecord) error {
 		return fmt.Errorf("LLMRecord cannot be nil")
 	}
 
-	// 构建哈希时需要处理可选参数
-	var tempStr, tokensStr string
-	if rec.Temperature != nil {
-		tempStr = fmt.Sprintf("%f", *rec.Temperature)
-	} else {
-		tempStr = "nil"
-	}
-	if rec.MaxTokens != nil {
-		tokensStr = fmt.Sprintf("%d", *rec.MaxTokens)
-	} else {
-		tokensStr = "nil"
-	}
-	// Request 现在是 json.RawMessage，需要转换为字符串用于哈希计算
+	// 仅使用 Request 计算哈希
 	requestStr := string(rec.Request)
-	hash := utils.MakeHash(fmt.Sprintf("%s|%s|%s|%s", requestStr, rec.ModelName, tempStr, tokensStr))
+	hash := utils.MakeHash(requestStr)
 	rec.RequestHash = hash
 
 	_, err := p.Pool.Exec(ctx, sqlUpsertLLM, hash, rec.RequestID, rec.Request, rec.ModelName, rec.Temperature, rec.MaxTokens, rec.Response, rec.TotalTokens, rec.PromptTokens, rec.CompletionTokens, rec.StartTime, rec.EndTime)
@@ -196,23 +184,11 @@ func (p *Postgres) GetEmbedding(ctx context.Context, inputText, modelName string
 }
 
 // GetLLM retrieves an LLM record by prompt and parameters
-func (p *Postgres) GetLLM(ctx context.Context, prompt, modelName string, temperature *float32, maxTokens *int) (*LLMRecord, error) {
-	// 构建哈希时需要处理可选参数
-	var tempStr, tokensStr string
-	if temperature != nil {
-		tempStr = fmt.Sprintf("%f", *temperature)
-	} else {
-		tempStr = "nil"
-	}
-	if maxTokens != nil {
-		tokensStr = fmt.Sprintf("%d", *maxTokens)
-	} else {
-		tokensStr = "nil"
-	}
-	hash := utils.MakeHash(fmt.Sprintf("%s|%s|%s|%s", prompt, modelName, tempStr, tokensStr))
+func (p *Postgres) GetLLM(ctx context.Context, request string) (*LLMRecord, error) {
+	hash := utils.MakeHash(request)
 
 	var record LLMRecord
-	err := p.Pool.QueryRow(ctx, sqlGetLLM, hash, modelName).Scan(
+	err := p.Pool.QueryRow(ctx, sqlGetLLM, hash).Scan(
 		&record.ID, &record.RequestHash, &record.RequestID, &record.Request, &record.ModelName,
 		&record.Temperature, &record.MaxTokens, &record.Response, &record.TotalTokens,
 		&record.PromptTokens, &record.CompletionTokens,

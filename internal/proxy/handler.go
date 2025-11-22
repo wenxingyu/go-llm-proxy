@@ -345,8 +345,8 @@ func (h *Handler) handleLLMCachePreProxy(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	prompt := string(bodyBytes)
-	rec, err := h.storage.GetLLM(r.Context(), prompt, model, temperature, maxTokens)
+	request := string(bodyBytes)
+	rec, err := h.storage.GetLLM(r.Context(), request, model)
 	if err != nil {
 		logger.Warn("LLM cache lookup failed",
 			zap.String("requestId", utils.GetRequestID(r)),
@@ -363,7 +363,7 @@ func (h *Handler) handleLLMCachePreProxy(w http.ResponseWriter, r *http.Request)
 	}
 
 	return false, &llmCacheMetadata{
-		prompt:      prompt,
+		prompt:      request,
 		model:       model,
 		temperature: temperature,
 		maxTokens:   maxTokens,

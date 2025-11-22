@@ -153,7 +153,7 @@ func TestStorage_LLMFlow(t *testing.T) {
 	require.NoError(t, s.UpsertLLM(ctx, llmRecord))
 
 	// Read back
-	rec, err := s.GetLLM(ctx, prompt, modelName, &temperature, &maxTokens)
+	rec, err := s.GetLLM(ctx, prompt, modelName)
 	require.NoError(t, err)
 	require.NotNil(t, rec)
 	// 比较 JSON 内容
@@ -227,7 +227,7 @@ func TestStorage_GetLLM_ReadThrough(t *testing.T) {
 	_ = rdb.Del(ctx, key).Err()
 
 	// First Get from DB
-	rec, err := s.GetLLM(ctx, prompt, modelName, &temperature, &maxTokens)
+	rec, err := s.GetLLM(ctx, prompt, modelName)
 	require.NoError(t, err)
 	require.NotNil(t, rec)
 	assert.Equal(t, response, string(rec.Response))
@@ -261,7 +261,7 @@ func TestStorage_LLMFlow_WithNilParams(t *testing.T) {
 	require.NoError(t, s.UpsertLLM(ctx, llmRecord))
 
 	// Read back with same nil parameters
-	rec, err := s.GetLLM(ctx, prompt, modelName, nil, nil)
+	rec, err := s.GetLLM(ctx, prompt, modelName)
 	require.NoError(t, err)
 	require.NotNil(t, rec)
 	var promptValue string
@@ -302,7 +302,7 @@ func TestStorage_LLMFlow_MixedParams(t *testing.T) {
 	require.NoError(t, s.UpsertLLM(ctx, llmRecord))
 
 	// Read back
-	rec, err := s.GetLLM(ctx, prompt, modelName, &temperature, nil)
+	rec, err := s.GetLLM(ctx, prompt, modelName)
 	require.NoError(t, err)
 	require.NotNil(t, rec)
 	assert.NotNil(t, rec.Temperature)

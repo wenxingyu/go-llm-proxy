@@ -102,7 +102,7 @@ func BenchmarkGetLLM_WithPreparedStatement(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = pg.GetLLM(ctx, prompt, "gpt-4", &temperature, &maxTokens)
+		_, _ = pg.GetLLM(ctx, prompt)
 	}
 }
 

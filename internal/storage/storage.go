@@ -134,24 +134,12 @@ func (s *Storage) UpsertEmbedding(ctx context.Context, inputText, modelName stri
 // ---------------- LLM cache ----------------
 
 // GetLLM tries Redis first, then Postgres; on hit from Postgres it backfills Redis.
-func (s *Storage) GetLLM(ctx context.Context, prompt, modelName string, temperature *float32, maxTokens *int) (*db.LLMRecord, error) {
+func (s *Storage) GetLLM(ctx context.Context, request, modelName string) (*db.LLMRecord, error) {
 	if s == nil || s.DB == nil || s.Cache == nil {
 		return nil, fmt.Errorf("storage not initialized")
 	}
 
-	// 构建哈希时需要处理可选参数
-	var tempStr, tokensStr string
-	if temperature != nil {
-		tempStr = fmt.Sprintf("%f", *temperature)
-	} else {
-		tempStr = "nil"
-	}
-	if maxTokens != nil {
-		tokensStr = fmt.Sprintf("%d", *maxTokens)
-	} else {
-		tokensStr = "nil"
-	}
-	hash := utils.MakeHash(fmt.Sprintf("%s|%s|%s|%s", prompt, modelName, tempStr, tokensStr))
+	hash := utils.MakeHash(request)
 	key := "llm:" + hash
 
 	var rec db.LLMRecord
@@ -166,7 +154,7 @@ func (s *Storage) GetLLM(ctx context.Context, prompt, modelName string, temperat
 		return &rec, nil
 	}
 
-	pgRec, err := s.DB.GetLLM(ctx, prompt, modelName, temperature, maxTokens)
+	pgRec, err := s.DB.GetLLM(ctx, request)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -208,18 +196,8 @@ func (s *Storage) UpsertLLM(ctx context.Context, rec *db.LLMRecord) error {
 	// 如果 RequestHash 为空，需要构建哈希
 	hash := rec.RequestHash
 	if hash == "" {
-		var tempStr, tokensStr string
-		if rec.Temperature != nil {
-			tempStr = fmt.Sprintf("%f", *rec.Temperature)
-		} else {
-			tempStr = "nil"
-		}
-		if rec.MaxTokens != nil {
-			tokensStr = fmt.Sprintf("%d", *rec.MaxTokens)
-		} else {
-			tokensStr = "nil"
-		}
-		hash = utils.MakeHash(fmt.Sprintf("%s|%s|%s|%s", rec.Request, rec.ModelName, tempStr, tokensStr))
+		requestStr := string(rec.Request)
+		hash = utils.MakeHash(requestStr)
 		rec.RequestHash = hash
 	}
 	key := "llm:" + hash
