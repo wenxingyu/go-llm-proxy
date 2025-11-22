@@ -64,7 +64,9 @@ CREATE TABLE IF NOT EXISTS llm_cache (
     completion_tokens INT,               -- completion token 数
     start_time TIMESTAMP(3),             -- 请求开始时间
     end_time TIMESTAMP(3),               -- 请求结束时间
-    duration_ms INT GENERATED ALWAYS AS (EXTRACT(EPOCH FROM (end_time - start_time)) * 1000)::INT STORED,  -- 请求耗时（毫秒）
+    duration_ms INT GENERATED ALWAYS AS (
+        CAST(EXTRACT(EPOCH FROM (end_time - start_time)) * 1000 AS INT)
+    ) STORED,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     expire_at BIGINT DEFAULT -1,         -- Unix 时间戳（毫秒），-1 表示永不过期
