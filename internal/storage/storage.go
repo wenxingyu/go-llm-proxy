@@ -190,46 +190,45 @@ func (s *Storage) GetLLM(ctx context.Context, prompt, modelName string, temperat
 }
 
 // UpsertLLM writes to Postgres and updates Redis.
-func (s *Storage) UpsertLLM(ctx context.Context, prompt, modelName string, temperature *float32, maxTokens *int, response string, tokensUsed *int) error {
+func (s *Storage) UpsertLLM(ctx context.Context, rec *db.LLMRecord) error {
 	if s == nil || s.DB == nil || s.Cache == nil {
 		return fmt.Errorf("storage not initialized")
 	}
+	if rec == nil {
+		return fmt.Errorf("LLMRecord cannot be nil")
+	}
 
-	if err := s.DB.UpsertLLM(ctx, prompt, modelName, temperature, maxTokens, response, tokensUsed); err != nil {
+	if err := s.DB.UpsertLLM(ctx, rec); err != nil {
 		logger.Error("Failed to upsert LLM response to Postgres",
-			zap.String("model", modelName),
+			zap.String("model", rec.ModelName),
 			zap.Error(err))
 		return err
 	}
 
-	// 构建哈希时需要处理可选参数
-	var tempStr, tokensStr string
-	if temperature != nil {
-		tempStr = fmt.Sprintf("%f", *temperature)
-	} else {
-		tempStr = "nil"
+	// 如果 RequestHash 为空，需要构建哈希
+	hash := rec.RequestHash
+	if hash == "" {
+		var tempStr, tokensStr string
+		if rec.Temperature != nil {
+			tempStr = fmt.Sprintf("%f", *rec.Temperature)
+		} else {
+			tempStr = "nil"
+		}
+		if rec.MaxTokens != nil {
+			tokensStr = fmt.Sprintf("%d", *rec.MaxTokens)
+		} else {
+			tokensStr = "nil"
+		}
+		hash = utils.MakeHash(fmt.Sprintf("%s|%s|%s|%s", rec.Prompt, rec.ModelName, tempStr, tokensStr))
+		rec.RequestHash = hash
 	}
-	if maxTokens != nil {
-		tokensStr = fmt.Sprintf("%d", *maxTokens)
-	} else {
-		tokensStr = "nil"
-	}
-	hash := utils.MakeHash(fmt.Sprintf("%s|%s|%s|%s", prompt, modelName, tempStr, tokensStr))
 	key := "llm:" + hash
-	rec := db.LLMRecord{
-		RequestHash: hash,
-		Prompt:      prompt,
-		ModelName:   modelName,
-		Response:    response,
-		Temperature: temperature,
-		MaxTokens:   maxTokens,
-		TokensUsed:  tokensUsed,
-	}
+
 	if err := s.Cache.Set(ctx, key, rec, time.Hour); err != nil {
 		// Log cache update failure but don't fail the request since DB write succeeded
 		logger.Warn("Failed to update Redis cache for LLM after DB write",
 			zap.String("key", key),
-			zap.String("model", modelName),
+			zap.String("model", rec.ModelName),
 			zap.Error(err))
 	}
 	return nil

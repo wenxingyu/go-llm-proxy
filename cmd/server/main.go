@@ -8,6 +8,7 @@ import (
 	"go-llm-server/internal/utils"
 	"go-llm-server/pkg/logger"
 	"net/http"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -47,9 +48,17 @@ func main() {
 	handler.InitLoadBalancers()
 
 	// 创建HTTP服务器
+	// 设置超时时间，确保与 transport 的 ResponseHeaderTimeout (900秒) 相匹配
+	// ReadTimeout: 读取整个请求（包括body）的最大时间
+	// WriteTimeout: 写入响应的最大时间
+	// ReadHeaderTimeout: 读取请求头的最大时间
 	server := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Port),
-		Handler: handler,
+		Addr:              fmt.Sprintf(":%d", cfg.Port),
+		Handler:           handler,
+		ReadTimeout:       900 * time.Second, // 读取整个请求的最大时间
+		WriteTimeout:      900 * time.Second, // 写入响应的最大时间
+		ReadHeaderTimeout: 10 * time.Second,  // 读取请求头的最大时间
+		IdleTimeout:       30 * time.Second,  // 空闲连接的超时时间
 	}
 
 	logger.Info("Server starting...", zap.Int("binding port", cfg.Port))

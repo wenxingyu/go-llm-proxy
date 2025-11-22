@@ -2,12 +2,14 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
 
 	"go-llm-server/internal/config"
 	"go-llm-server/internal/utils"
+	"go-llm-server/pkg/db"
 
 	redisv9 "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
@@ -127,21 +129,48 @@ func TestStorage_LLMFlow(t *testing.T) {
 	modelName := "gpt-4"
 	temperature := float32(0.7)
 	maxTokens := 256
-	response := "Go is a programming language."
-	tokensUsed := 42
+	response := `{"answer": "Go is a programming language."}`
+	totalTokens := 42
+	promptTokens := 10
+	completionTokens := 32
+
+	// 将 prompt 和 response 转换为 JSON 格式
+	promptJSON, err := json.Marshal(prompt)
+	require.NoError(t, err)
+	responseJSON := json.RawMessage(response)
 
 	// Upsert into DB (and cache)
-	require.NoError(t, s.UpsertLLM(ctx, prompt, modelName, &temperature, &maxTokens, response, &tokensUsed))
+	llmRecord := &db.LLMRecord{
+		Prompt:           json.RawMessage(promptJSON),
+		ModelName:        modelName,
+		Temperature:      &temperature,
+		MaxTokens:        &maxTokens,
+		Response:         responseJSON,
+		TotalTokens:      &totalTokens,
+		PromptTokens:     &promptTokens,
+		CompletionTokens: &completionTokens,
+	}
+	require.NoError(t, s.UpsertLLM(ctx, llmRecord))
 
 	// Read back
 	rec, err := s.GetLLM(ctx, prompt, modelName, &temperature, &maxTokens)
 	require.NoError(t, err)
 	require.NotNil(t, rec)
-	assert.Equal(t, prompt, rec.Prompt)
+	// 比较 JSON 内容
+	var promptValue string
+	err = json.Unmarshal(rec.Prompt, &promptValue)
+	require.NoError(t, err)
+	assert.Equal(t, prompt, promptValue)
 	assert.Equal(t, modelName, rec.ModelName)
-	assert.Equal(t, response, rec.Response)
-	if rec.TokensUsed != nil {
-		assert.Equal(t, tokensUsed, *rec.TokensUsed)
+	assert.Equal(t, response, string(rec.Response))
+	if rec.TotalTokens != nil {
+		assert.Equal(t, totalTokens, *rec.TotalTokens)
+	}
+	if rec.PromptTokens != nil {
+		assert.Equal(t, promptTokens, *rec.PromptTokens)
+	}
+	if rec.CompletionTokens != nil {
+		assert.Equal(t, completionTokens, *rec.CompletionTokens)
 	}
 
 	// Verify present in Redis
@@ -165,10 +194,28 @@ func TestStorage_GetLLM_ReadThrough(t *testing.T) {
 	modelName := "gpt-4"
 	temperature := float32(0.5)
 	maxTokens := 128
-	response := "ok"
-	tokensUsed := 1
+	response := `{"result": "ok"}`
+	totalTokens := 1
+	promptTokens := 1
+	completionTokens := 0
+
+	// 将 prompt 转换为 JSON 格式
+	promptJSON, err := json.Marshal(prompt)
+	require.NoError(t, err)
+	responseJSON := json.RawMessage(response)
+
 	// Ensure DB has the record
-	require.NoError(t, s.UpsertLLM(ctx, prompt, modelName, &temperature, &maxTokens, response, &tokensUsed))
+	llmRecord := &db.LLMRecord{
+		Prompt:           json.RawMessage(promptJSON),
+		ModelName:        modelName,
+		Temperature:      &temperature,
+		MaxTokens:        &maxTokens,
+		Response:         responseJSON,
+		TotalTokens:      &totalTokens,
+		PromptTokens:     &promptTokens,
+		CompletionTokens: &completionTokens,
+	}
+	require.NoError(t, s.UpsertLLM(ctx, llmRecord))
 
 	// Remove from Redis to test backfill
 	var tempStr, tokensStr string
@@ -183,7 +230,7 @@ func TestStorage_GetLLM_ReadThrough(t *testing.T) {
 	rec, err := s.GetLLM(ctx, prompt, modelName, &temperature, &maxTokens)
 	require.NoError(t, err)
 	require.NotNil(t, rec)
-	assert.Equal(t, response, rec.Response)
+	assert.Equal(t, response, string(rec.Response))
 
 	// Ensure backfilled to Redis
 	res, err := rdb.Exists(ctx, key).Result()
@@ -198,21 +245,36 @@ func TestStorage_LLMFlow_WithNilParams(t *testing.T) {
 	ctx := context.Background()
 	prompt := "Test with nil params"
 	modelName := "gpt-4"
-	response := "Response without params"
+	response := `{"message": "Response without params"}`
+
+	// 将 prompt 转换为 JSON 格式
+	promptJSON, err := json.Marshal(prompt)
+	require.NoError(t, err)
+	responseJSON := json.RawMessage(response)
 
 	// Upsert with nil optional parameters
-	require.NoError(t, s.UpsertLLM(ctx, prompt, modelName, nil, nil, response, nil))
+	llmRecord := &db.LLMRecord{
+		Prompt:    json.RawMessage(promptJSON),
+		ModelName: modelName,
+		Response:  responseJSON,
+	}
+	require.NoError(t, s.UpsertLLM(ctx, llmRecord))
 
 	// Read back with same nil parameters
 	rec, err := s.GetLLM(ctx, prompt, modelName, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, rec)
-	assert.Equal(t, prompt, rec.Prompt)
+	var promptValue string
+	err = json.Unmarshal(rec.Prompt, &promptValue)
+	require.NoError(t, err)
+	assert.Equal(t, prompt, promptValue)
 	assert.Equal(t, modelName, rec.ModelName)
-	assert.Equal(t, response, rec.Response)
+	assert.Equal(t, response, string(rec.Response))
 	assert.Nil(t, rec.Temperature)
 	assert.Nil(t, rec.MaxTokens)
-	assert.Nil(t, rec.TokensUsed)
+	assert.Nil(t, rec.TotalTokens)
+	assert.Nil(t, rec.PromptTokens)
+	assert.Nil(t, rec.CompletionTokens)
 }
 
 func TestStorage_LLMFlow_MixedParams(t *testing.T) {
@@ -223,10 +285,21 @@ func TestStorage_LLMFlow_MixedParams(t *testing.T) {
 	prompt := "Test with mixed params"
 	modelName := "gpt-4"
 	temperature := float32(0.0) // 测试零值和 nil 的区别
-	response := "Response with only temperature"
+	response := `{"result": "Response with only temperature"}`
+
+	// 将 prompt 转换为 JSON 格式
+	promptJSON, err := json.Marshal(prompt)
+	require.NoError(t, err)
+	responseJSON := json.RawMessage(response)
 
 	// Upsert with only temperature set
-	require.NoError(t, s.UpsertLLM(ctx, prompt, modelName, &temperature, nil, response, nil))
+	llmRecord := &db.LLMRecord{
+		Prompt:      json.RawMessage(promptJSON),
+		ModelName:   modelName,
+		Temperature: &temperature,
+		Response:    responseJSON,
+	}
+	require.NoError(t, s.UpsertLLM(ctx, llmRecord))
 
 	// Read back
 	rec, err := s.GetLLM(ctx, prompt, modelName, &temperature, nil)
@@ -235,7 +308,9 @@ func TestStorage_LLMFlow_MixedParams(t *testing.T) {
 	assert.NotNil(t, rec.Temperature)
 	assert.Equal(t, float32(0.0), *rec.Temperature) // 确认 0.0 是有意义的值
 	assert.Nil(t, rec.MaxTokens)
-	assert.Nil(t, rec.TokensUsed)
+	assert.Nil(t, rec.TotalTokens)
+	assert.Nil(t, rec.PromptTokens)
+	assert.Nil(t, rec.CompletionTokens)
 }
 
 func TestStorage_Close(t *testing.T) {

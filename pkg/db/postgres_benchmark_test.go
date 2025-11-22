@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
@@ -33,12 +34,26 @@ func BenchmarkUpsertLLM_WithPreparedStatement(b *testing.B) {
 	ctx := context.Background()
 	temperature := float32(0.7)
 	maxTokens := 100
-	tokensUsed := 50
+	totalTokens := 50
+	promptTokens := 20
+	completionTokens := 30
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		prompt := fmt.Sprintf("benchmark prompt %d", i)
-		_ = pg.UpsertLLM(ctx, prompt, "gpt-4", &temperature, &maxTokens, "response", &tokensUsed)
+		promptJSON, _ := json.Marshal(prompt)
+		responseJSON, _ := json.Marshal(map[string]string{"response": "response"})
+		rec := &LLMRecord{
+			Prompt:           json.RawMessage(promptJSON),
+			ModelName:        "gpt-4",
+			Temperature:      &temperature,
+			MaxTokens:        &maxTokens,
+			Response:         json.RawMessage(responseJSON),
+			TotalTokens:      &totalTokens,
+			PromptTokens:     &promptTokens,
+			CompletionTokens: &completionTokens,
+		}
+		_ = pg.UpsertLLM(ctx, rec)
 	}
 }
 
@@ -65,11 +80,25 @@ func BenchmarkGetLLM_WithPreparedStatement(b *testing.B) {
 	ctx := context.Background()
 	temperature := float32(0.7)
 	maxTokens := 100
-	tokensUsed := 50
+	totalTokens := 50
+	promptTokens := 20
+	completionTokens := 30
 
 	// Insert test data
 	prompt := "benchmark get test"
-	_ = pg.UpsertLLM(ctx, prompt, "gpt-4", &temperature, &maxTokens, "response", &tokensUsed)
+	promptJSON, _ := json.Marshal(prompt)
+	responseJSON, _ := json.Marshal(map[string]string{"response": "response"})
+	rec := &LLMRecord{
+		Prompt:           json.RawMessage(promptJSON),
+		ModelName:        "gpt-4",
+		Temperature:      &temperature,
+		MaxTokens:        &maxTokens,
+		Response:         json.RawMessage(responseJSON),
+		TotalTokens:      &totalTokens,
+		PromptTokens:     &promptTokens,
+		CompletionTokens: &completionTokens,
+	}
+	_ = pg.UpsertLLM(ctx, rec)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

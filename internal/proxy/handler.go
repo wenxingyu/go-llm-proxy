@@ -5,9 +5,11 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"go-llm-server/internal/config"
 	stor "go-llm-server/internal/storage"
 	"go-llm-server/internal/utils"
+	"go-llm-server/pkg/db"
 	"go-llm-server/pkg/logger"
 	"io"
 	"net/http"
@@ -15,13 +17,31 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
+	"fmt"
 	"sync"
 
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )
+
+// ensureJSONFormat 确保输入是有效的 JSON 格式，如果不是则尝试解析或包装
+func ensureJSONFormat(input string) (json.RawMessage, error) {
+	// 尝试解析为 JSON，如果成功直接返回
+	var jsonVal interface{}
+	if err := json.Unmarshal([]byte(input), &jsonVal); err == nil {
+		// 是有效的 JSON，直接返回
+		return json.RawMessage(input), nil
+	}
+	// 如果不是有效的 JSON，将其包装为 JSON 字符串
+	jsonBytes, err := json.Marshal(input)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(jsonBytes), nil
+}
 
 // Handler 代理处理器
 type Handler struct {
@@ -44,6 +64,8 @@ type llmCacheMetadata struct {
 	temperature *float32
 	maxTokens   *int
 	stream      bool
+	startTime   time.Time
+	requestID   string
 }
 
 // NewHandler 创建新的代理处理器，并初始化 ReverseProxy 实例
@@ -100,13 +122,48 @@ func (h *Handler) director(request *http.Request) {
 		return
 	}
 
+	// 创建一个新的 context，与客户端断开连接时不会立即取消
+	// 使用 900 秒超时，与 transport 的 ResponseHeaderTimeout 保持一致
+	// 这样可以确保代理请求不会因为客户端断开而立即取消
+	ctx := request.Context()
+	newCtx, _ := context.WithTimeout(context.Background(), 900*time.Second)
+
+	// 如果原 context 中有 LLM cache metadata，保留它
+	if meta := ctx.Value(llmCacheContextKey); meta != nil {
+		newCtx = context.WithValue(newCtx, llmCacheContextKey, meta)
+	}
+
+	// 更新请求的 context，使其不受客户端断开影响
+	*request = *request.WithContext(newCtx)
+
 	request.URL = targetURL
 	request.Host = targetURL.Host
 }
 
 // errorHandler 处理代理错误
 func (h *Handler) errorHandler(w http.ResponseWriter, r *http.Request, err error) {
-	logger.Error("Proxy error", zap.String("requestId", utils.GetRequestID(r)), zap.Error(err))
+	requestId := utils.GetRequestID(r)
+
+	// 检查是否是上下文取消错误（使用 errors.Is 以处理可能的错误包装）
+	if errors.Is(err, context.Canceled) {
+		// 记录为警告，因为客户端断开连接或请求超时是常见情况
+		// 这通常发生在客户端断开连接或请求超时时
+		logger.Warn("Proxy request context canceled",
+			zap.String("requestId", requestId),
+			zap.Error(err),
+			zap.String("errorType", "context_canceled"))
+	} else if errors.Is(err, context.DeadlineExceeded) {
+		logger.Warn("Proxy request timeout",
+			zap.String("requestId", requestId),
+			zap.Error(err),
+			zap.String("errorType", "context_timeout"))
+	} else {
+		logger.Error("Proxy error",
+			zap.String("requestId", requestId),
+			zap.Error(err))
+	}
+
+	// 尝试发送错误响应（如果响应还未发送，httputil 会尝试发送）
 	http.Error(w, "Bad Gateway", http.StatusBadGateway)
 }
 
@@ -295,10 +352,10 @@ func (h *Handler) handleLLMCachePreProxy(w http.ResponseWriter, r *http.Request)
 			zap.String("requestId", utils.GetRequestID(r)),
 			zap.String("model", model),
 			zap.Error(err))
-	} else if rec != nil && rec.Response != "" {
+	} else if rec != nil && len(rec.Response) > 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-LLM-Cache", "HIT")
-		_, _ = w.Write([]byte(rec.Response))
+		_, _ = w.Write(rec.Response)
 		logger.Info("Served response from LLM cache",
 			zap.String("requestId", utils.GetRequestID(r)),
 			zap.String("model", model))
@@ -311,6 +368,8 @@ func (h *Handler) handleLLMCachePreProxy(w http.ResponseWriter, r *http.Request)
 		temperature: temperature,
 		maxTokens:   maxTokens,
 		stream:      false,
+		startTime:   time.Now(),
+		requestID:   utils.GetRequestID(r),
 	}
 }
 
@@ -375,20 +434,71 @@ func (h *Handler) modifyResponse(resp *http.Response) error {
 		return nil
 	}
 
-	var tokensUsedPtr *int
+	var totalTokensPtr, promptTokensPtr, completionTokensPtr *int
 	var responsePayload struct {
 		Usage *struct {
-			TotalTokens *int `json:"total_tokens"`
+			TotalTokens      *int `json:"total_tokens"`
+			PromptTokens     *int `json:"prompt_tokens"`
+			CompletionTokens *int `json:"completion_tokens"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(bodyToStore, &responsePayload); err == nil {
-		if responsePayload.Usage != nil && responsePayload.Usage.TotalTokens != nil {
-			total := *responsePayload.Usage.TotalTokens
-			tokensUsedPtr = &total
+		if responsePayload.Usage != nil {
+			if responsePayload.Usage.TotalTokens != nil {
+				total := *responsePayload.Usage.TotalTokens
+				totalTokensPtr = &total
+			}
+			if responsePayload.Usage.PromptTokens != nil {
+				prompt := *responsePayload.Usage.PromptTokens
+				promptTokensPtr = &prompt
+			}
+			if responsePayload.Usage.CompletionTokens != nil {
+				completion := *responsePayload.Usage.CompletionTokens
+				completionTokensPtr = &completion
+			}
 		}
 	}
 
-	if err := h.storage.UpsertLLM(resp.Request.Context(), meta.prompt, meta.model, meta.temperature, meta.maxTokens, string(bodyToStore), tokensUsedPtr); err != nil {
+	// 将 prompt 和 response 转换为 JSON 格式
+	// prompt 可能是字符串或已经是 JSON，我们将其包装为 JSON 字符串
+	promptJSON, err := ensureJSONFormat(meta.prompt)
+	if err != nil {
+		logger.Warn("Failed to convert prompt to JSON format",
+			zap.String("model", meta.model),
+			zap.Error(err))
+		// 如果转换失败，将字符串包装为 JSON 字符串
+		promptJSON = json.RawMessage(fmt.Sprintf(`"%s"`, strings.ReplaceAll(meta.prompt, `"`, `\"`)))
+	}
+
+	// response 应该已经是 JSON 格式
+	responseJSON, err := ensureJSONFormat(string(bodyToStore))
+	if err != nil {
+		logger.Warn("Failed to convert response to JSON format",
+			zap.String("model", meta.model),
+			zap.Error(err))
+		// 如果转换失败，尝试包装为 JSON 字符串
+		responseJSON = json.RawMessage(fmt.Sprintf(`"%s"`, strings.ReplaceAll(string(bodyToStore), `"`, `\"`)))
+	}
+
+	// 记录结束时间
+	endTime := time.Now()
+	startTime := meta.startTime
+
+	llmRecord := &db.LLMRecord{
+		RequestID:        meta.requestID,
+		Prompt:           promptJSON,
+		ModelName:        meta.model,
+		Temperature:      meta.temperature,
+		MaxTokens:        meta.maxTokens,
+		Response:         responseJSON,
+		TotalTokens:      totalTokensPtr,
+		PromptTokens:     promptTokensPtr,
+		CompletionTokens: completionTokensPtr,
+		StartTime:        &startTime,
+		EndTime:          &endTime,
+	}
+
+	if err := h.storage.UpsertLLM(resp.Request.Context(), llmRecord); err != nil {
 		logger.Warn("Failed to store response in LLM cache",
 			zap.String("model", meta.model),
 			zap.Error(err))

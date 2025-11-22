@@ -22,10 +22,10 @@ const (
 		DO UPDATE SET embedding = EXCLUDED.embedding, updated_at = NOW()`
 
 	sqlUpsertLLM = `
-		INSERT INTO llm_cache (request_hash, prompt, model_name, temperature, max_tokens, response, tokens_used)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO llm_cache (request_hash, request_id, prompt, model_name, temperature, max_tokens, response, total_tokens, prompt_tokens, completion_tokens, start_time, end_time)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (request_hash, model_name)
-		DO UPDATE SET response = EXCLUDED.response, tokens_used = EXCLUDED.tokens_used, updated_at = NOW()`
+		DO UPDATE SET request_id = EXCLUDED.request_id, response = EXCLUDED.response, total_tokens = EXCLUDED.total_tokens, prompt_tokens = EXCLUDED.prompt_tokens, completion_tokens = EXCLUDED.completion_tokens, start_time = EXCLUDED.start_time, end_time = EXCLUDED.end_time, updated_at = NOW()`
 
 	sqlGetEmbedding = `
 		SELECT id, input_hash, input_text, model_name, embedding, created_at, updated_at, expire_at
@@ -33,7 +33,7 @@ const (
 		WHERE input_hash = $1 AND model_name = $2`
 
 	sqlGetLLM = `
-		SELECT id, request_hash, prompt, model_name, temperature, max_tokens, response, tokens_used, created_at, updated_at, expire_at
+		SELECT id, request_hash, request_id, prompt, model_name, temperature, max_tokens, response, total_tokens, prompt_tokens, completion_tokens, start_time, end_time, created_at, updated_at, expire_at
 		FROM llm_cache
 		WHERE request_hash = $1 AND model_name = $2`
 
@@ -45,7 +45,7 @@ const (
 		LIMIT $2 OFFSET $3`
 
 	sqlListLLMs = `
-		SELECT id, request_hash, prompt, model_name, temperature, max_tokens, response, tokens_used, created_at, updated_at, expire_at
+		SELECT id, request_hash, request_id, prompt, model_name, temperature, max_tokens, response, total_tokens, prompt_tokens, completion_tokens, start_time, end_time, created_at, updated_at, expire_at
 		FROM llm_cache
 		WHERE model_name = $1
 		ORDER BY created_at DESC
@@ -149,22 +149,29 @@ func (p *Postgres) UpsertEmbedding(ctx context.Context, inputText, modelName str
 	return nil
 }
 
-func (p *Postgres) UpsertLLM(ctx context.Context, prompt, modelName string, temperature *float32, maxTokens *int, response string, tokensUsed *int) error {
+func (p *Postgres) UpsertLLM(ctx context.Context, rec *LLMRecord) error {
+	if rec == nil {
+		return fmt.Errorf("LLMRecord cannot be nil")
+	}
+
 	// 构建哈希时需要处理可选参数
 	var tempStr, tokensStr string
-	if temperature != nil {
-		tempStr = fmt.Sprintf("%f", *temperature)
+	if rec.Temperature != nil {
+		tempStr = fmt.Sprintf("%f", *rec.Temperature)
 	} else {
 		tempStr = "nil"
 	}
-	if maxTokens != nil {
-		tokensStr = fmt.Sprintf("%d", *maxTokens)
+	if rec.MaxTokens != nil {
+		tokensStr = fmt.Sprintf("%d", *rec.MaxTokens)
 	} else {
 		tokensStr = "nil"
 	}
-	hash := utils.MakeHash(fmt.Sprintf("%s|%s|%s|%s", prompt, modelName, tempStr, tokensStr))
+	// Prompt 现在是 json.RawMessage，需要转换为字符串用于哈希计算
+	promptStr := string(rec.Prompt)
+	hash := utils.MakeHash(fmt.Sprintf("%s|%s|%s|%s", promptStr, rec.ModelName, tempStr, tokensStr))
+	rec.RequestHash = hash
 
-	_, err := p.Pool.Exec(ctx, sqlUpsertLLM, hash, prompt, modelName, temperature, maxTokens, response, tokensUsed)
+	_, err := p.Pool.Exec(ctx, sqlUpsertLLM, hash, rec.RequestID, rec.Prompt, rec.ModelName, rec.Temperature, rec.MaxTokens, rec.Response, rec.TotalTokens, rec.PromptTokens, rec.CompletionTokens, rec.StartTime, rec.EndTime)
 	if err != nil {
 		return err
 	}
@@ -206,8 +213,10 @@ func (p *Postgres) GetLLM(ctx context.Context, prompt, modelName string, tempera
 
 	var record LLMRecord
 	err := p.Pool.QueryRow(ctx, sqlGetLLM, hash, modelName).Scan(
-		&record.ID, &record.RequestHash, &record.Prompt, &record.ModelName,
-		&record.Temperature, &record.MaxTokens, &record.Response, &record.TokensUsed,
+		&record.ID, &record.RequestHash, &record.RequestID, &record.Prompt, &record.ModelName,
+		&record.Temperature, &record.MaxTokens, &record.Response, &record.TotalTokens,
+		&record.PromptTokens, &record.CompletionTokens,
+		&record.StartTime, &record.EndTime,
 		&record.CreatedAt, &record.UpdatedAt, &record.ExpireAt,
 	)
 
@@ -254,8 +263,10 @@ func (p *Postgres) ListLLMs(ctx context.Context, modelName string, limit, offset
 	for rows.Next() {
 		var record LLMRecord
 		err := rows.Scan(
-			&record.ID, &record.RequestHash, &record.Prompt, &record.ModelName,
-			&record.Temperature, &record.MaxTokens, &record.Response, &record.TokensUsed,
+			&record.ID, &record.RequestHash, &record.RequestID, &record.Prompt, &record.ModelName,
+			&record.Temperature, &record.MaxTokens, &record.Response, &record.TotalTokens,
+			&record.PromptTokens, &record.CompletionTokens,
+			&record.StartTime, &record.EndTime,
 			&record.CreatedAt, &record.UpdatedAt, &record.ExpireAt,
 		)
 		if err != nil {
