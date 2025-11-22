@@ -22,7 +22,7 @@ const (
 		DO UPDATE SET embedding = EXCLUDED.embedding, updated_at = NOW()`
 
 	sqlUpsertLLM = `
-		INSERT INTO llm_cache (request_hash, request_id, prompt, model_name, temperature, max_tokens, response, total_tokens, prompt_tokens, completion_tokens, start_time, end_time)
+		INSERT INTO llm_cache (request_hash, request_id, request, model_name, temperature, max_tokens, response, total_tokens, prompt_tokens, completion_tokens, start_time, end_time)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (request_hash, model_name)
 		DO UPDATE SET request_id = EXCLUDED.request_id, response = EXCLUDED.response, total_tokens = EXCLUDED.total_tokens, prompt_tokens = EXCLUDED.prompt_tokens, completion_tokens = EXCLUDED.completion_tokens, start_time = EXCLUDED.start_time, end_time = EXCLUDED.end_time, updated_at = NOW()`
@@ -33,7 +33,7 @@ const (
 		WHERE input_hash = $1 AND model_name = $2`
 
 	sqlGetLLM = `
-		SELECT id, request_hash, request_id, prompt, model_name, temperature, max_tokens, response, total_tokens, prompt_tokens, completion_tokens, start_time, end_time, created_at, updated_at, expire_at
+		SELECT id, request_hash, request_id, request, model_name, temperature, max_tokens, response, total_tokens, prompt_tokens, completion_tokens, start_time, end_time, created_at, updated_at, expire_at
 		FROM llm_cache
 		WHERE request_hash = $1 AND model_name = $2`
 
@@ -45,7 +45,7 @@ const (
 		LIMIT $2 OFFSET $3`
 
 	sqlListLLMs = `
-		SELECT id, request_hash, request_id, prompt, model_name, temperature, max_tokens, response, total_tokens, prompt_tokens, completion_tokens, start_time, end_time, created_at, updated_at, expire_at
+		SELECT id, request_hash, request_id, request, model_name, temperature, max_tokens, response, total_tokens, prompt_tokens, completion_tokens, start_time, end_time, created_at, updated_at, expire_at
 		FROM llm_cache
 		WHERE model_name = $1
 		ORDER BY created_at DESC
@@ -166,12 +166,12 @@ func (p *Postgres) UpsertLLM(ctx context.Context, rec *LLMRecord) error {
 	} else {
 		tokensStr = "nil"
 	}
-	// Prompt 现在是 json.RawMessage，需要转换为字符串用于哈希计算
-	promptStr := string(rec.Prompt)
-	hash := utils.MakeHash(fmt.Sprintf("%s|%s|%s|%s", promptStr, rec.ModelName, tempStr, tokensStr))
+	// Request 现在是 json.RawMessage，需要转换为字符串用于哈希计算
+	requestStr := string(rec.Request)
+	hash := utils.MakeHash(fmt.Sprintf("%s|%s|%s|%s", requestStr, rec.ModelName, tempStr, tokensStr))
 	rec.RequestHash = hash
 
-	_, err := p.Pool.Exec(ctx, sqlUpsertLLM, hash, rec.RequestID, rec.Prompt, rec.ModelName, rec.Temperature, rec.MaxTokens, rec.Response, rec.TotalTokens, rec.PromptTokens, rec.CompletionTokens, rec.StartTime, rec.EndTime)
+	_, err := p.Pool.Exec(ctx, sqlUpsertLLM, hash, rec.RequestID, rec.Request, rec.ModelName, rec.Temperature, rec.MaxTokens, rec.Response, rec.TotalTokens, rec.PromptTokens, rec.CompletionTokens, rec.StartTime, rec.EndTime)
 	if err != nil {
 		return err
 	}
@@ -213,7 +213,7 @@ func (p *Postgres) GetLLM(ctx context.Context, prompt, modelName string, tempera
 
 	var record LLMRecord
 	err := p.Pool.QueryRow(ctx, sqlGetLLM, hash, modelName).Scan(
-		&record.ID, &record.RequestHash, &record.RequestID, &record.Prompt, &record.ModelName,
+		&record.ID, &record.RequestHash, &record.RequestID, &record.Request, &record.ModelName,
 		&record.Temperature, &record.MaxTokens, &record.Response, &record.TotalTokens,
 		&record.PromptTokens, &record.CompletionTokens,
 		&record.StartTime, &record.EndTime,
@@ -263,7 +263,7 @@ func (p *Postgres) ListLLMs(ctx context.Context, modelName string, limit, offset
 	for rows.Next() {
 		var record LLMRecord
 		err := rows.Scan(
-			&record.ID, &record.RequestHash, &record.RequestID, &record.Prompt, &record.ModelName,
+			&record.ID, &record.RequestHash, &record.RequestID, &record.Request, &record.ModelName,
 			&record.Temperature, &record.MaxTokens, &record.Response, &record.TotalTokens,
 			&record.PromptTokens, &record.CompletionTokens,
 			&record.StartTime, &record.EndTime,

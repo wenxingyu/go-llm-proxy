@@ -486,7 +486,7 @@ func (h *Handler) modifyResponse(resp *http.Response) error {
 
 	llmRecord := &db.LLMRecord{
 		RequestID:        meta.requestID,
-		Prompt:           promptJSON,
+		Request:          promptJSON,
 		ModelName:        meta.model,
 		Temperature:      meta.temperature,
 		MaxTokens:        meta.maxTokens,

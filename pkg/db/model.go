@@ -22,7 +22,7 @@ type LLMRecord struct {
 	ID               int             `json:"id"`
 	RequestID        string          `json:"request_id"` // 请求 ID
 	RequestHash      string          `json:"request_hash"`
-	Prompt           json.RawMessage `json:"prompt"` // JSONB 格式的 prompt
+	Request          json.RawMessage `json:"request"` // JSONB 格式的 request
 	ModelName        string          `json:"model_name"`
 	Temperature      *float32        `json:"temperature,omitempty"`
 	MaxTokens        *int            `json:"max_tokens,omitempty"`
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS llm_cache (
     id SERIAL PRIMARY KEY,
     request_id VARCHAR(255),             -- 请求 ID
     request_hash CHAR(64) NOT NULL,      -- 对 prompt+参数 做 hash
-    prompt JSONB NOT NULL,               -- 原始 prompt (JSON格式)
+    request JSONB NOT NULL,               -- 原始 request (JSON格式)
     model_name VARCHAR(128) NOT NULL,    -- 模型名称
     temperature NUMERIC(3,2),            -- 可选参数
     max_tokens INT,                      -- 可选参数

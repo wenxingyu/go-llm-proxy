@@ -141,7 +141,7 @@ func TestStorage_LLMFlow(t *testing.T) {
 
 	// Upsert into DB (and cache)
 	llmRecord := &db.LLMRecord{
-		Prompt:           json.RawMessage(promptJSON),
+		Request:          json.RawMessage(promptJSON),
 		ModelName:        modelName,
 		Temperature:      &temperature,
 		MaxTokens:        &maxTokens,
@@ -158,7 +158,7 @@ func TestStorage_LLMFlow(t *testing.T) {
 	require.NotNil(t, rec)
 	// 比较 JSON 内容
 	var promptValue string
-	err = json.Unmarshal(rec.Prompt, &promptValue)
+	err = json.Unmarshal(rec.Request, &promptValue)
 	require.NoError(t, err)
 	assert.Equal(t, prompt, promptValue)
 	assert.Equal(t, modelName, rec.ModelName)
@@ -206,7 +206,7 @@ func TestStorage_GetLLM_ReadThrough(t *testing.T) {
 
 	// Ensure DB has the record
 	llmRecord := &db.LLMRecord{
-		Prompt:           json.RawMessage(promptJSON),
+		Request:          json.RawMessage(promptJSON),
 		ModelName:        modelName,
 		Temperature:      &temperature,
 		MaxTokens:        &maxTokens,
@@ -254,7 +254,7 @@ func TestStorage_LLMFlow_WithNilParams(t *testing.T) {
 
 	// Upsert with nil optional parameters
 	llmRecord := &db.LLMRecord{
-		Prompt:    json.RawMessage(promptJSON),
+		Request:   json.RawMessage(promptJSON),
 		ModelName: modelName,
 		Response:  responseJSON,
 	}
@@ -265,7 +265,7 @@ func TestStorage_LLMFlow_WithNilParams(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, rec)
 	var promptValue string
-	err = json.Unmarshal(rec.Prompt, &promptValue)
+	err = json.Unmarshal(rec.Request, &promptValue)
 	require.NoError(t, err)
 	assert.Equal(t, prompt, promptValue)
 	assert.Equal(t, modelName, rec.ModelName)
@@ -294,7 +294,7 @@ func TestStorage_LLMFlow_MixedParams(t *testing.T) {
 
 	// Upsert with only temperature set
 	llmRecord := &db.LLMRecord{
-		Prompt:      json.RawMessage(promptJSON),
+		Request:     json.RawMessage(promptJSON),
 		ModelName:   modelName,
 		Temperature: &temperature,
 		Response:    responseJSON,

@@ -44,7 +44,7 @@ func BenchmarkUpsertLLM_WithPreparedStatement(b *testing.B) {
 		promptJSON, _ := json.Marshal(prompt)
 		responseJSON, _ := json.Marshal(map[string]string{"response": "response"})
 		rec := &LLMRecord{
-			Prompt:           json.RawMessage(promptJSON),
+			Request:          json.RawMessage(promptJSON),
 			ModelName:        "gpt-4",
 			Temperature:      &temperature,
 			MaxTokens:        &maxTokens,
@@ -89,7 +89,7 @@ func BenchmarkGetLLM_WithPreparedStatement(b *testing.B) {
 	promptJSON, _ := json.Marshal(prompt)
 	responseJSON, _ := json.Marshal(map[string]string{"response": "response"})
 	rec := &LLMRecord{
-		Prompt:           json.RawMessage(promptJSON),
+		Request:          json.RawMessage(promptJSON),
 		ModelName:        "gpt-4",
 		Temperature:      &temperature,
 		MaxTokens:        &maxTokens,

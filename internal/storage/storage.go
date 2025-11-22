@@ -219,7 +219,7 @@ func (s *Storage) UpsertLLM(ctx context.Context, rec *db.LLMRecord) error {
 		} else {
 			tokensStr = "nil"
 		}
-		hash = utils.MakeHash(fmt.Sprintf("%s|%s|%s|%s", rec.Prompt, rec.ModelName, tempStr, tokensStr))
+		hash = utils.MakeHash(fmt.Sprintf("%s|%s|%s|%s", rec.Request, rec.ModelName, tempStr, tokensStr))
 		rec.RequestHash = hash
 	}
 	key := "llm:" + hash
