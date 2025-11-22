@@ -7,14 +7,14 @@ import (
 
 // EmbeddingRecord represents an embedding cache record
 type EmbeddingRecord struct {
-	ID        int        `json:"id"`
-	InputHash string     `json:"input_hash"`
-	InputText string     `json:"input_text"`
-	ModelName string     `json:"model_name"`
-	Embedding []float64  `json:"embedding"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
-	ExpireAt  *time.Time `json:"expire_at,omitempty"`
+	ID        int       `json:"id"`
+	InputHash string    `json:"input_hash"`
+	InputText string    `json:"input_text"`
+	ModelName string    `json:"model_name"`
+	Embedding []float64 `json:"embedding"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	ExpireAt  *int64    `json:"expire_at,omitempty"` // Unix 时间戳（毫秒），-1 表示永不过期
 }
 
 // LLMRecord represents an LLM cache record
@@ -32,9 +32,10 @@ type LLMRecord struct {
 	CompletionTokens *int            `json:"completion_tokens,omitempty"` // completion token 数
 	StartTime        *time.Time      `json:"start_time,omitempty"`        // 请求开始时间
 	EndTime          *time.Time      `json:"end_time,omitempty"`          // 请求结束时间
+	DurationMs       *int            `json:"duration_ms,omitempty"`       // 请求耗时（毫秒）
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
-	ExpireAt         *time.Time      `json:"expire_at,omitempty"`
+	ExpireAt         *int64          `json:"expire_at,omitempty"` // Unix 时间戳（毫秒），-1 表示永不过期
 }
 
 const ddl = `
@@ -46,26 +47,27 @@ CREATE TABLE IF NOT EXISTS embedding_cache (
     embedding FLOAT8[] NOT NULL,         -- 用数组存向量
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
-    expire_at TIMESTAMP,                 -- 可选，过期时间
+    expire_at BIGINT DEFAULT -1,         -- Unix 时间戳（毫秒），-1 表示永不过期
     UNIQUE(input_hash, model_name)       -- 保证唯一
 );
 CREATE TABLE IF NOT EXISTS llm_cache (
     id SERIAL PRIMARY KEY,
     request_id VARCHAR(255),             -- 请求 ID
     request_hash CHAR(64) NOT NULL,      -- 对 prompt+参数 做 hash
-    request JSONB NOT NULL,               -- 原始 request (JSON格式)
+    request JSONB NOT NULL,              -- 原始 request (JSON格式)
     model_name VARCHAR(128) NOT NULL,    -- 模型名称
     temperature NUMERIC(3,2),            -- 可选参数
     max_tokens INT,                      -- 可选参数
-    response JSONB NOT NULL,              -- 模型返回的文本 (JSON格式)
+    response JSONB NOT NULL,             -- 模型返回的文本 (JSON格式)
     total_tokens INT,                    -- 总 token 数
     prompt_tokens INT,                   -- prompt token 数
     completion_tokens INT,               -- completion token 数
     start_time TIMESTAMP(3),             -- 请求开始时间
     end_time TIMESTAMP(3),               -- 请求结束时间
+    duration_ms INT GENERATED ALWAYS AS (EXTRACT(EPOCH FROM (end_time - start_time)) * 1000)::INT STORED,  -- 请求耗时（毫秒）
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
-    expire_at TIMESTAMP,                 -- 可选，缓存过期
+    expire_at BIGINT DEFAULT -1,         -- Unix 时间戳（毫秒），-1 表示永不过期
     UNIQUE(request_hash, model_name)     -- 保证唯一
 );
 `
