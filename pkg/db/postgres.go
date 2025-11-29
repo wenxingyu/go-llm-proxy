@@ -16,10 +16,28 @@ import (
 // SQL query constants for prepared statement caching
 const (
 	sqlUpsertEmbedding = `
-		INSERT INTO embedding_cache (input_hash, input_text, model_name, embedding)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (input_hash, model_name)
-		DO UPDATE SET embedding = EXCLUDED.embedding, updated_at = NOW()`
+		INSERT INTO embedding_cache (
+			input_hash,
+			input_text,
+			model_name,
+			provider,
+			embedding,
+			request_id,
+			token_count,
+			start_time,
+			end_time,
+			expire_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (input_hash, model_name, provider)
+		DO UPDATE SET
+			embedding = EXCLUDED.embedding,
+			request_id = EXCLUDED.request_id,
+			token_count = EXCLUDED.token_count,
+			start_time = EXCLUDED.start_time,
+			end_time = EXCLUDED.end_time,
+			expire_at = EXCLUDED.expire_at,
+			updated_at = NOW()`
 
 	sqlUpsertLLM = `
 		INSERT INTO llm_cache (request_hash, request_id, request, model_name, temperature, max_tokens, response, total_tokens, prompt_tokens, completion_tokens, start_time, end_time)
@@ -28,9 +46,23 @@ const (
 		DO UPDATE SET request_id = EXCLUDED.request_id, response = EXCLUDED.response, total_tokens = EXCLUDED.total_tokens, prompt_tokens = EXCLUDED.prompt_tokens, completion_tokens = EXCLUDED.completion_tokens, start_time = EXCLUDED.start_time, end_time = EXCLUDED.end_time, updated_at = NOW()`
 
 	sqlGetEmbedding = `
-		SELECT id, input_hash, input_text, model_name, embedding, created_at, updated_at, expire_at
+		SELECT
+			id,
+			input_hash,
+			input_text,
+			model_name,
+			provider,
+			request_id,
+			token_count,
+			embedding,
+			start_time,
+			end_time,
+			duration_ms,
+			created_at,
+			updated_at,
+			expire_at
 		FROM embedding_cache
-		WHERE input_hash = $1 AND model_name = $2`
+		WHERE input_hash = $1 AND model_name = $2 AND provider = $3`
 
 	sqlGetLLM = `
 		SELECT id, request_hash, request_id, request, model_name, temperature, max_tokens, response, total_tokens, prompt_tokens, completion_tokens, start_time, end_time, created_at, updated_at, expire_at
@@ -38,11 +70,25 @@ const (
 		WHERE request_hash = $1`
 
 	sqlListEmbeddings = `
-		SELECT id, input_hash, input_text, model_name, embedding, created_at, updated_at, expire_at
+		SELECT
+			id,
+			input_hash,
+			input_text,
+			model_name,
+			provider,
+			request_id,
+			token_count,
+			embedding,
+			start_time,
+			end_time,
+			duration_ms,
+			created_at,
+			updated_at,
+			expire_at
 		FROM embedding_cache
-		WHERE model_name = $1
+		WHERE model_name = $1 AND provider = $2
 		ORDER BY created_at DESC
-		LIMIT $2 OFFSET $3`
+		LIMIT $3 OFFSET $4`
 
 	sqlListLLMs = `
 		SELECT id, request_hash, request_id, request, model_name, temperature, max_tokens, response, total_tokens, prompt_tokens, completion_tokens, start_time, end_time, created_at, updated_at, expire_at
@@ -51,7 +97,7 @@ const (
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3`
 
-	sqlCountEmbeddings = `SELECT COUNT(*) FROM embedding_cache WHERE model_name = $1`
+	sqlCountEmbeddings = `SELECT COUNT(*) FROM embedding_cache WHERE model_name = $1 AND provider = $2`
 	sqlCountLLMs       = `SELECT COUNT(*) FROM llm_cache WHERE model_name = $1`
 )
 
@@ -138,15 +184,34 @@ func (p *Postgres) createTables(ctx context.Context) error {
 	return nil
 }
 
-func (p *Postgres) UpsertEmbedding(ctx context.Context, inputText, modelName string, embedding []float64) error {
-	hash := utils.MakeHash(inputText + modelName)
-
-	_, err := p.Pool.Exec(ctx, sqlUpsertEmbedding, hash, inputText, modelName, embedding)
-	if err != nil {
-		return err
+func (p *Postgres) UpsertEmbedding(ctx context.Context, rec *EmbeddingRecord) error {
+	if rec == nil {
+		return fmt.Errorf("embedding record cannot be nil")
+	}
+	if rec.InputText == "" || rec.ModelName == "" || rec.Provider == "" {
+		return fmt.Errorf("embedding record missing required fields")
+	}
+	if rec.InputHash == "" {
+		rec.InputHash = utils.MakeEmbeddingCacheKey(rec.InputText, rec.ModelName, rec.Provider)
+	}
+	if rec.ExpireAt == nil {
+		defaultExpire := int64(-1)
+		rec.ExpireAt = &defaultExpire
 	}
 
-	return nil
+	_, err := p.Pool.Exec(ctx, sqlUpsertEmbedding,
+		rec.InputHash,
+		rec.InputText,
+		rec.ModelName,
+		rec.Provider,
+		rec.Embedding,
+		rec.RequestID,
+		rec.TokenCount,
+		rec.StartTime,
+		rec.EndTime,
+		rec.ExpireAt,
+	)
+	return err
 }
 
 func (p *Postgres) UpsertLLM(ctx context.Context, rec *LLMRecord) error {
@@ -166,14 +231,26 @@ func (p *Postgres) UpsertLLM(ctx context.Context, rec *LLMRecord) error {
 	return nil
 }
 
-// GetEmbedding retrieves an embedding record by input text and model name
-func (p *Postgres) GetEmbedding(ctx context.Context, inputText, modelName string) (*EmbeddingRecord, error) {
-	hash := utils.MakeHash(inputText + modelName)
+// GetEmbedding retrieves an embedding record by input, model, and provider
+func (p *Postgres) GetEmbedding(ctx context.Context, inputText, modelName, provider string) (*EmbeddingRecord, error) {
+	hash := utils.MakeEmbeddingCacheKey(inputText, modelName, provider)
 
 	var record EmbeddingRecord
-	err := p.Pool.QueryRow(ctx, sqlGetEmbedding, hash, modelName).Scan(
-		&record.ID, &record.InputHash, &record.InputText, &record.ModelName,
-		&record.Embedding, &record.CreatedAt, &record.UpdatedAt, &record.ExpireAt,
+	err := p.Pool.QueryRow(ctx, sqlGetEmbedding, hash, modelName, provider).Scan(
+		&record.ID,
+		&record.InputHash,
+		&record.InputText,
+		&record.ModelName,
+		&record.Provider,
+		&record.RequestID,
+		&record.TokenCount,
+		&record.Embedding,
+		&record.StartTime,
+		&record.EndTime,
+		&record.DurationMs,
+		&record.CreatedAt,
+		&record.UpdatedAt,
+		&record.ExpireAt,
 	)
 
 	if err != nil {
@@ -204,8 +281,8 @@ func (p *Postgres) GetLLM(ctx context.Context, request string) (*LLMRecord, erro
 }
 
 // ListEmbeddings retrieves embedding records with pagination
-func (p *Postgres) ListEmbeddings(ctx context.Context, modelName string, limit, offset int) ([]EmbeddingRecord, error) {
-	rows, err := p.Pool.Query(ctx, sqlListEmbeddings, modelName, limit, offset)
+func (p *Postgres) ListEmbeddings(ctx context.Context, modelName, provider string, limit, offset int) ([]EmbeddingRecord, error) {
+	rows, err := p.Pool.Query(ctx, sqlListEmbeddings, modelName, provider, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -215,8 +292,20 @@ func (p *Postgres) ListEmbeddings(ctx context.Context, modelName string, limit, 
 	for rows.Next() {
 		var record EmbeddingRecord
 		err := rows.Scan(
-			&record.ID, &record.InputHash, &record.InputText, &record.ModelName,
-			&record.Embedding, &record.CreatedAt, &record.UpdatedAt, &record.ExpireAt,
+			&record.ID,
+			&record.InputHash,
+			&record.InputText,
+			&record.ModelName,
+			&record.Provider,
+			&record.RequestID,
+			&record.TokenCount,
+			&record.Embedding,
+			&record.StartTime,
+			&record.EndTime,
+			&record.DurationMs,
+			&record.CreatedAt,
+			&record.UpdatedAt,
+			&record.ExpireAt,
 		)
 		if err != nil {
 			return nil, err
@@ -254,10 +343,10 @@ func (p *Postgres) ListLLMs(ctx context.Context, modelName string, limit, offset
 	return records, rows.Err()
 }
 
-// CountEmbeddings returns the total count of embedding records for a model
-func (p *Postgres) CountEmbeddings(ctx context.Context, modelName string) (int, error) {
+// CountEmbeddings returns the total count of embedding records for a model/provider
+func (p *Postgres) CountEmbeddings(ctx context.Context, modelName, provider string) (int, error) {
 	var count int
-	err := p.Pool.QueryRow(ctx, sqlCountEmbeddings, modelName).Scan(&count)
+	err := p.Pool.QueryRow(ctx, sqlCountEmbeddings, modelName, provider).Scan(&count)
 	return count, err
 }
 

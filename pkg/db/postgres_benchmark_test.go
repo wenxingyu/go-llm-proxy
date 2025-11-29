@@ -135,6 +135,11 @@ func BenchmarkUpsertEmbedding_WithPreparedStatement(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		inputText := fmt.Sprintf("benchmark embedding %d", i)
-		_ = pg.UpsertEmbedding(ctx, inputText, "text-embedding-ada-002", embedding)
+		_ = pg.UpsertEmbedding(ctx, &EmbeddingRecord{
+			InputText: inputText,
+			ModelName: "text-embedding-ada-002",
+			Provider:  "benchmark-provider",
+			Embedding: embedding,
+		})
 	}
 }

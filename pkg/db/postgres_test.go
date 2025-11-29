@@ -73,6 +73,17 @@ func generateLongText(length int) string {
 	return string(result)
 }
 
+const testProvider = "test-provider.local"
+
+func newTestEmbeddingRecord(inputText, modelName string, embedding []float64) *EmbeddingRecord {
+	return &EmbeddingRecord{
+		InputText: inputText,
+		ModelName: modelName,
+		Provider:  testProvider,
+		Embedding: embedding,
+	}
+}
+
 // cleanupTestDB cleans up test data
 func cleanupTestDB(t *testing.T, pg *Postgres) {
 	ctx := context.Background()
@@ -144,7 +155,7 @@ func TestUpsertEmbedding(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := pg.UpsertEmbedding(ctx, tt.inputText, tt.modelName, tt.embedding)
+			err := pg.UpsertEmbedding(ctx, newTestEmbeddingRecord(tt.inputText, tt.modelName, tt.embedding))
 
 			if tt.expectError {
 				if err == nil {
@@ -171,13 +182,13 @@ func TestUpsertEmbeddingUpdate(t *testing.T) {
 	updatedEmbedding := []float64{0.6, 0.7, 0.8, 0.9, 1.0}
 
 	// First insertion
-	err := pg.UpsertEmbedding(ctx, inputText, modelName, originalEmbedding)
+	err := pg.UpsertEmbedding(ctx, newTestEmbeddingRecord(inputText, modelName, originalEmbedding))
 	if err != nil {
 		t.Fatalf("First insertion should succeed: %v", err)
 	}
 
 	// Verify first insertion
-	record, err := pg.GetEmbedding(ctx, inputText, modelName)
+	record, err := pg.GetEmbedding(ctx, inputText, modelName, testProvider)
 	if err != nil {
 		t.Fatalf("Should be able to retrieve first embedding: %v", err)
 	}
@@ -186,13 +197,13 @@ func TestUpsertEmbeddingUpdate(t *testing.T) {
 	}
 
 	// Update with new embedding
-	err = pg.UpsertEmbedding(ctx, inputText, modelName, updatedEmbedding)
+	err = pg.UpsertEmbedding(ctx, newTestEmbeddingRecord(inputText, modelName, updatedEmbedding))
 	if err != nil {
 		t.Fatalf("Update should succeed: %v", err)
 	}
 
 	// Verify update
-	record, err = pg.GetEmbedding(ctx, inputText, modelName)
+	record, err = pg.GetEmbedding(ctx, inputText, modelName, testProvider)
 	if err != nil {
 		t.Fatalf("Should be able to retrieve updated embedding: %v", err)
 	}
@@ -236,7 +247,7 @@ func TestGetEmbedding(t *testing.T) {
 
 	// Insert test data
 	for _, tc := range testCases {
-		err := pg.UpsertEmbedding(ctx, tc.inputText, tc.modelName, tc.embedding)
+		err := pg.UpsertEmbedding(ctx, newTestEmbeddingRecord(tc.inputText, tc.modelName, tc.embedding))
 		if err != nil {
 			t.Fatalf("Setup should succeed for %s: %v", tc.inputText, err)
 		}
@@ -295,7 +306,7 @@ func TestGetEmbedding(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			record, err := pg.GetEmbedding(ctx, tt.inputText, tt.modelName)
+			record, err := pg.GetEmbedding(ctx, tt.inputText, tt.modelName, testProvider)
 
 			if tt.expectError {
 				if err == nil {
@@ -349,13 +360,13 @@ func TestGetEmbeddingDataIntegrity(t *testing.T) {
 	embedding := []float64{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0}
 
 	// Insert embedding
-	err := pg.UpsertEmbedding(ctx, inputText, modelName, embedding)
+	err := pg.UpsertEmbedding(ctx, newTestEmbeddingRecord(inputText, modelName, embedding))
 	if err != nil {
 		t.Fatalf("Insert should succeed: %v", err)
 	}
 
 	// Retrieve and verify data integrity
-	record, err := pg.GetEmbedding(ctx, inputText, modelName)
+	record, err := pg.GetEmbedding(ctx, inputText, modelName, testProvider)
 	if err != nil {
 		t.Fatalf("Retrieve should succeed: %v", err)
 	}
@@ -375,7 +386,7 @@ func TestGetEmbeddingDataIntegrity(t *testing.T) {
 	}
 
 	// Verify hash calculation
-	expectedHash := utils.MakeHash(inputText + modelName)
+	expectedHash := utils.MakeEmbeddingCacheKey(inputText, modelName, testProvider)
 	if record.InputHash != expectedHash {
 		t.Errorf("InputHash should match calculated hash: got %s, expected %s", record.InputHash, expectedHash)
 	}
@@ -411,25 +422,25 @@ func TestEmbeddingHashConsistency(t *testing.T) {
 
 	// Insert multiple times with same input
 	for i := 0; i < 3; i++ {
-		err := pg.UpsertEmbedding(ctx, inputText, modelName, embedding)
+		err := pg.UpsertEmbedding(ctx, newTestEmbeddingRecord(inputText, modelName, embedding))
 		if err != nil {
 			t.Fatalf("Insert %d should succeed: %v", i+1, err)
 		}
 	}
 
 	// Retrieve and verify hash consistency
-	record, err := pg.GetEmbedding(ctx, inputText, modelName)
+	record, err := pg.GetEmbedding(ctx, inputText, modelName, testProvider)
 	if err != nil {
 		t.Fatalf("Retrieve should succeed: %v", err)
 	}
 
-	expectedHash := utils.MakeHash(inputText + modelName)
+	expectedHash := utils.MakeEmbeddingCacheKey(inputText, modelName, testProvider)
 	if record.InputHash != expectedHash {
 		t.Errorf("Hash should be consistent: got %s, expected %s", record.InputHash, expectedHash)
 	}
 
 	// Verify only one record exists (due to unique constraint)
-	count, err := pg.CountEmbeddings(ctx, modelName)
+	count, err := pg.CountEmbeddings(ctx, modelName, testProvider)
 	if err != nil {
 		t.Fatalf("Count should succeed: %v", err)
 	}
@@ -452,7 +463,7 @@ func TestEmbeddingConcurrentAccess(t *testing.T) {
 	done := make(chan error, 10)
 	for i := 0; i < 10; i++ {
 		go func() {
-			err := pg.UpsertEmbedding(ctx, inputText, modelName, embedding)
+			err := pg.UpsertEmbedding(ctx, newTestEmbeddingRecord(inputText, modelName, embedding))
 			done <- err
 		}()
 	}
@@ -466,7 +477,7 @@ func TestEmbeddingConcurrentAccess(t *testing.T) {
 	}
 
 	// Verify final state
-	record, err := pg.GetEmbedding(ctx, inputText, modelName)
+	record, err := pg.GetEmbedding(ctx, inputText, modelName, testProvider)
 	if err != nil {
 		t.Fatalf("Retrieve should succeed: %v", err)
 	}
@@ -522,7 +533,7 @@ func TestEmbeddingEdgeCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Test upsert
-			err := pg.UpsertEmbedding(ctx, tt.inputText, tt.modelName, tt.embedding)
+			err := pg.UpsertEmbedding(ctx, newTestEmbeddingRecord(tt.inputText, tt.modelName, tt.embedding))
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error for %s", tt.name)
@@ -532,7 +543,7 @@ func TestEmbeddingEdgeCases(t *testing.T) {
 					t.Errorf("Unexpected error for %s: %v", tt.name, err)
 				} else {
 					// Test retrieval if upsert succeeded
-					record, err := pg.GetEmbedding(ctx, tt.inputText, tt.modelName)
+					record, err := pg.GetEmbedding(ctx, tt.inputText, tt.modelName, testProvider)
 					if err != nil {
 						t.Errorf("Retrieve should succeed for %s: %v", tt.name, err)
 					} else if !equalFloatSlices(tt.embedding, record.Embedding) {
@@ -561,7 +572,7 @@ func BenchmarkUpsertEmbedding(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		inputText := fmt.Sprintf("benchmark_%d", i)
-		err := pg.UpsertEmbedding(ctx, inputText, "text-embedding-ada-002", embedding)
+		err := pg.UpsertEmbedding(ctx, newTestEmbeddingRecord(inputText, "text-embedding-ada-002", embedding))
 		if err != nil {
 			b.Fatalf("UpsertEmbedding failed: %v", err)
 		}
@@ -593,14 +604,14 @@ func BenchmarkGetEmbedding(b *testing.B) {
 	inputText := "benchmark_get_test"
 	modelName := "text-embedding-ada-002"
 
-	err := pg.UpsertEmbedding(ctx, inputText, modelName, embedding)
+	err := pg.UpsertEmbedding(ctx, newTestEmbeddingRecord(inputText, modelName, embedding))
 	if err != nil {
 		b.Fatalf("Setup failed: %v", err)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := pg.GetEmbedding(ctx, inputText, modelName)
+		_, err := pg.GetEmbedding(ctx, inputText, modelName, testProvider)
 		if err != nil {
 			b.Fatalf("GetEmbedding failed: %v", err)
 		}

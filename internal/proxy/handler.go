@@ -43,13 +43,20 @@ func ensureJSONFormat(input string) (json.RawMessage, error) {
 	return json.RawMessage(jsonBytes), nil
 }
 
+type cacheStorage interface {
+	GetEmbedding(ctx context.Context, inputText, modelName, provider string) (*db.EmbeddingRecord, error)
+	UpsertEmbedding(ctx context.Context, rec *db.EmbeddingRecord) error
+	GetLLM(ctx context.Context, request, modelName string) (*db.LLMRecord, error)
+	UpsertLLM(ctx context.Context, rec *db.LLMRecord) error
+}
+
 // Handler 代理处理器
 type Handler struct {
 	cfg        *config.Config
 	lbManager  *LoadBalancerManager
 	strategies []URLRouteStrategy
 	proxy      *httputil.ReverseProxy
-	storage    *stor.Storage
+	storage    cacheStorage
 
 	ipLimiters sync.Map // map[string]*rate.Limiter
 }
@@ -57,6 +64,7 @@ type Handler struct {
 type cacheContextKey struct{}
 
 var llmCacheContextKey = cacheContextKey{}
+var embeddingCacheContextKey = cacheContextKey{}
 
 type llmCacheMetadata struct {
 	prompt      string
@@ -71,7 +79,7 @@ type llmCacheMetadata struct {
 // NewHandler 创建新的代理处理器，并初始化 ReverseProxy 实例
 func NewHandler(cfg *config.Config) *Handler {
 	manager := NewLoadBalancerManager()
-	var storageInstance *stor.Storage
+	var storageInstance cacheStorage
 	if cfg != nil {
 		if s, err := stor.NewStorage(cfg); err != nil {
 			logger.Warn("Failed to initialize storage, LLM cache disabled", zap.Error(err))
@@ -243,6 +251,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.shouldUseEmbeddingCache(r) {
+		handled, meta := h.handleEmbeddingCachePreProxy(w, r)
+		if handled {
+			return
+		}
+		if meta != nil {
+			r = r.WithContext(context.WithValue(r.Context(), embeddingCacheContextKey, meta))
+		}
+	}
+
 	if h.shouldUseLLMCache(r) {
 		handled, meta := h.handleLLMCachePreProxy(w, r)
 		if handled {
@@ -378,16 +396,23 @@ func (h *Handler) modifyResponse(resp *http.Response) error {
 		return nil
 	}
 
-	meta, _ := resp.Request.Context().Value(llmCacheContextKey).(*llmCacheMetadata)
-	if meta == nil || meta.stream {
+	if meta, _ := resp.Request.Context().Value(llmCacheContextKey).(*llmCacheMetadata); meta != nil && !meta.stream {
+		return h.handleLLMCachePostResponse(resp, meta)
+	}
+
+	if meta, _ := resp.Request.Context().Value(embeddingCacheContextKey).(*embeddingCacheMetadata); meta != nil {
+		return h.handleEmbeddingCachePostResponse(resp, meta)
+	}
+
+	return nil
+}
+
+func (h *Handler) handleLLMCachePostResponse(resp *http.Response, meta *llmCacheMetadata) error {
+	if resp.StatusCode != http.StatusOK || resp.Body == nil {
 		return nil
 	}
 
 	resp.Header.Set("X-LLM-Cache", "MISS")
-
-	if resp.StatusCode != http.StatusOK || resp.Body == nil {
-		return nil
-	}
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -459,28 +484,22 @@ func (h *Handler) modifyResponse(resp *http.Response) error {
 		}
 	}
 
-	// 将 prompt 和 response 转换为 JSON 格式
-	// prompt 可能是字符串或已经是 JSON，我们将其包装为 JSON 字符串
 	promptJSON, err := ensureJSONFormat(meta.prompt)
 	if err != nil {
 		logger.Warn("Failed to convert prompt to JSON format",
 			zap.String("model", meta.model),
 			zap.Error(err))
-		// 如果转换失败，将字符串包装为 JSON 字符串
 		promptJSON = json.RawMessage(fmt.Sprintf(`"%s"`, strings.ReplaceAll(meta.prompt, `"`, `\"`)))
 	}
 
-	// response 应该已经是 JSON 格式
 	responseJSON, err := ensureJSONFormat(string(bodyToStore))
 	if err != nil {
 		logger.Warn("Failed to convert response to JSON format",
 			zap.String("model", meta.model),
 			zap.Error(err))
-		// 如果转换失败，尝试包装为 JSON 字符串
 		responseJSON = json.RawMessage(fmt.Sprintf(`"%s"`, strings.ReplaceAll(string(bodyToStore), `"`, `\"`)))
 	}
 
-	// 记录结束时间
 	endTime := time.Now()
 	startTime := meta.startTime
 

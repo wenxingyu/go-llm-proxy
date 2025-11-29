@@ -7,14 +7,20 @@ import (
 
 // EmbeddingRecord represents an embedding cache record
 type EmbeddingRecord struct {
-	ID        int       `json:"id"`
-	InputHash string    `json:"input_hash"`
-	InputText string    `json:"input_text"`
-	ModelName string    `json:"model_name"`
-	Embedding []float64 `json:"embedding"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	ExpireAt  *int64    `json:"expire_at,omitempty"` // Unix 时间戳（毫秒），-1 表示永不过期
+	ID         int        `json:"id"`
+	InputHash  string     `json:"input_hash"`
+	InputText  string     `json:"input_text"`
+	ModelName  string     `json:"model_name"`
+	Provider   string     `json:"provider"`
+	RequestID  string     `json:"request_id"`
+	TokenCount *int       `json:"token_count,omitempty"`
+	Embedding  []float64  `json:"embedding"`
+	StartTime  *time.Time `json:"start_time,omitempty"`
+	EndTime    *time.Time `json:"end_time,omitempty"`
+	DurationMs *int       `json:"duration_ms,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	ExpireAt   *int64     `json:"expire_at,omitempty"` // Unix 时间戳（毫秒），-1 表示永不过期
 }
 
 // LLMRecord represents an LLM cache record
@@ -41,19 +47,33 @@ type LLMRecord struct {
 const ddl = `
 CREATE TABLE IF NOT EXISTS embedding_cache (
     id SERIAL PRIMARY KEY,
-    input_hash CHAR(64) NOT NULL,        -- 输入文本的哈希值（如 SHA256）
-    input_text TEXT NOT NULL,            -- 原始输入，方便调试
-    model_name VARCHAR(128) NOT NULL,    -- 模型名称
-    embedding FLOAT8[] NOT NULL,         -- 用数组存向量
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW(),
-    expire_at BIGINT DEFAULT -1,         -- Unix 时间戳（毫秒），-1 表示永不过期
-    UNIQUE(input_hash, model_name)       -- 保证唯一
+    request_id VARCHAR(255),
+    -- 核心查找字段
+    input_hash CHAR(64) NOT NULL,
+    model_name VARCHAR(128) NOT NULL,
+    provider   VARCHAR(128) NOT NULL,    
+    -- 数据内容
+    input_text TEXT NOT NULL,
+    embedding REAL[] NOT NULL,
+    -- 元数据
+    token_count INTEGER,
+    -- 时间管理
+    created_at TIMESTAMPTZ(3) DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(3) DEFAULT NOW(),
+    start_time TIMESTAMPTZ(3),
+    end_time   TIMESTAMPTZ(3),
+    -- 生成列：自动计算耗时 (PostgreSQL 12+ 支持)
+    duration_ms INT GENERATED ALWAYS AS (
+        CAST(EXTRACT(EPOCH FROM (end_time - start_time)) * 1000 AS INT)
+    ) STORED,
+    expire_at BIGINT DEFAULT -1,
+    -- 联合唯一索引
+    UNIQUE(input_hash, model_name, provider)
 );
 CREATE TABLE IF NOT EXISTS llm_cache (
     id SERIAL PRIMARY KEY,
     request_id VARCHAR(255),             -- 请求 ID
-    request_hash CHAR(64) NOT NULL,      -- 对 prompt+参数 做 hash
+    request_hash CHAR(64) NOT NULL,      -- 对 request 做 hash
     request JSONB NOT NULL,              -- 原始 request (JSON格式)
     model_name VARCHAR(128) NOT NULL,    -- 模型名称
     temperature NUMERIC(3,2),            -- 可选参数
@@ -62,13 +82,13 @@ CREATE TABLE IF NOT EXISTS llm_cache (
     total_tokens INT,                    -- 总 token 数
     prompt_tokens INT,                   -- prompt token 数
     completion_tokens INT,               -- completion token 数
-    start_time TIMESTAMP(3),             -- 请求开始时间
-    end_time TIMESTAMP(3),               -- 请求结束时间
+    start_time TIMESTAMPTZ(3),             -- 请求开始时间
+    end_time TIMESTAMPTZ(3),               -- 请求结束时间
     duration_ms INT GENERATED ALWAYS AS (
         CAST(EXTRACT(EPOCH FROM (end_time - start_time)) * 1000 AS INT)
     ) STORED,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
     expire_at BIGINT DEFAULT -1,         -- Unix 时间戳（毫秒），-1 表示永不过期
     UNIQUE(request_hash, model_name)     -- 保证唯一
 );

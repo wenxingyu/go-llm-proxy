@@ -16,6 +16,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testProvider = "test-provider.local"
+
+func newStorageEmbeddingRecord(inputText, modelName string, embedding []float64) *db.EmbeddingRecord {
+	return &db.EmbeddingRecord{
+		InputText: inputText,
+		ModelName: modelName,
+		Provider:  testProvider,
+		Embedding: embedding,
+	}
+}
+
 // Note: These tests require real services reachable at the following addresses,
 // matching existing Redis and Postgres integration tests in this repo.
 // Postgres: 192.168.70.128:5432 (db: postgres_test, user: postgres, password: postgres_password)
@@ -66,10 +77,10 @@ func TestStorage_EmbeddingFlow(t *testing.T) {
 	embedding := []float64{0.1, 0.2, 0.3, 0.4}
 
 	// Upsert into DB (and cache)
-	require.NoError(t, s.UpsertEmbedding(ctx, inputText, modelName, embedding))
+	require.NoError(t, s.UpsertEmbedding(ctx, newStorageEmbeddingRecord(inputText, modelName, embedding)))
 
 	// Read back (should hit Redis immediately)
-	rec, err := s.GetEmbedding(ctx, inputText, modelName)
+	rec, err := s.GetEmbedding(ctx, inputText, modelName, testProvider)
 	require.NoError(t, err)
 	require.NotNil(t, rec)
 	assert.Equal(t, inputText, rec.InputText)
@@ -77,7 +88,7 @@ func TestStorage_EmbeddingFlow(t *testing.T) {
 	assert.Equal(t, embedding, rec.Embedding)
 
 	// Verify value present in Redis by reading the exact key via raw client
-	key := "embedding:" + utils.MakeHash(inputText+modelName)
+	key := "embedding:" + utils.MakeEmbeddingCacheKey(inputText, modelName, testProvider)
 	rdb := newRawRedis()
 	defer rdb.Close()
 	val, err := rdb.Get(ctx, key).Result()
@@ -95,16 +106,16 @@ func TestStorage_GetEmbedding_ReadThrough(t *testing.T) {
 	embedding := []float64{0.5, 0.6, 0.7}
 
 	// Ensure DB has the record, but remove from Redis to test read-through
-	require.NoError(t, s.UpsertEmbedding(ctx, inputText, modelName, embedding))
+	require.NoError(t, s.UpsertEmbedding(ctx, newStorageEmbeddingRecord(inputText, modelName, embedding)))
 
-	key := "embedding:" + utils.MakeHash(inputText+modelName)
+	key := "embedding:" + utils.MakeEmbeddingCacheKey(inputText, modelName, testProvider)
 	rdb := newRawRedis()
 	defer rdb.Close()
 	_ = rdb.Del(ctx, key).Err()
 
 	// First Get should fetch from DB and backfill Redis
 	start := time.Now()
-	rec, err := s.GetEmbedding(ctx, inputText, modelName)
+	rec, err := s.GetEmbedding(ctx, inputText, modelName, testProvider)
 	require.NoError(t, err)
 	require.NotNil(t, rec)
 	assert.Equal(t, embedding, rec.Embedding)
@@ -112,7 +123,7 @@ func TestStorage_GetEmbedding_ReadThrough(t *testing.T) {
 
 	// Second Get should be faster (cache hit)
 	start = time.Now()
-	_, err = s.GetEmbedding(ctx, inputText, modelName)
+	_, err = s.GetEmbedding(ctx, inputText, modelName, testProvider)
 	require.NoError(t, err)
 	secondLatency := time.Since(start)
 
