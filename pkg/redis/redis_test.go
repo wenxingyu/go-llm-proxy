@@ -14,7 +14,7 @@ import (
 // Test configuration with the provided Redis connection details
 var testConfig = &Config{
 	Addr:     os.Getenv("REDIS_ADDR"),
-	Password: "",
+	Password: os.Getenv("REDIS_PASSWORD"),
 	DB:       0,
 }
 

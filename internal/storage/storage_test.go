@@ -3,7 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -35,18 +35,18 @@ func newStorageEmbeddingRecord(inputText, modelName string, embedding []float64)
 func setupTestStorage(t *testing.T) *Storage {
 	cfg := &config.Config{
 		Database: config.DatabaseConfig{
-			Host:            "192.168.70.128",
+			Host:            os.Getenv("DB_HOST"),
 			Port:            5432,
-			User:            "postgres",
-			Password:        "postgres_password",
-			DBName:          "postgres_test",
+			User:            os.Getenv("DB_USER"),
+			Password:        os.Getenv("DB_PASSWORD"),
+			DBName:          os.Getenv("DB_NAME"),
 			SSLMode:         "disable",
 			MaxOpenConns:    10,
 			MaxIdleConns:    5,
 			ConnMaxLifetime: 300,
 		},
 		Redis: config.RedisConfig{
-			Addr:     "192.168.70.128:6379",
+			Addr:     os.Getenv("REDIS_ADDR"),
 			Password: "myredissecret",
 			DB:       0,
 		},
@@ -61,7 +61,7 @@ func setupTestStorage(t *testing.T) *Storage {
 
 func newRawRedis() *redisv9.Client {
 	return redisv9.NewClient(&redisv9.Options{
-		Addr:     "192.168.70.128:6379",
+		Addr:     os.Getenv("REDIS_ADDR"),
 		Password: "myredissecret",
 		DB:       0,
 	})
@@ -140,7 +140,7 @@ func TestStorage_LLMFlow(t *testing.T) {
 	modelName := "gpt-4"
 	temperature := float32(0.7)
 	maxTokens := 256
-	response := `{"answer": "Go is a programming language."}`
+	response := `{"answer":"Go is a programming language."}`
 	totalTokens := 42
 	promptTokens := 10
 	completionTokens := 32
@@ -164,7 +164,7 @@ func TestStorage_LLMFlow(t *testing.T) {
 	require.NoError(t, s.UpsertLLM(ctx, llmRecord))
 
 	// Read back
-	rec, err := s.GetLLM(ctx, prompt, modelName)
+	rec, err := s.GetLLM(ctx, string(promptJSON), modelName)
 	require.NoError(t, err)
 	require.NotNil(t, rec)
 	// 比较 JSON 内容
@@ -184,11 +184,7 @@ func TestStorage_LLMFlow(t *testing.T) {
 		assert.Equal(t, completionTokens, *rec.CompletionTokens)
 	}
 
-	// Verify present in Redis
-	var tempStr, tokensStr string
-	tempStr = fmt.Sprintf("%f", temperature)
-	tokensStr = fmt.Sprintf("%d", maxTokens)
-	key := "llm:" + utils.MakeHash(fmt.Sprintf("%s|%s|%s|%s", prompt, modelName, tempStr, tokensStr))
+	key := "llm:" + utils.MakeHash(string(promptJSON))
 	rdb := newRawRedis()
 	defer rdb.Close()
 	val, err := rdb.Get(ctx, key).Result()
@@ -229,16 +225,13 @@ func TestStorage_GetLLM_ReadThrough(t *testing.T) {
 	require.NoError(t, s.UpsertLLM(ctx, llmRecord))
 
 	// Remove from Redis to test backfill
-	var tempStr, tokensStr string
-	tempStr = fmt.Sprintf("%f", temperature)
-	tokensStr = fmt.Sprintf("%d", maxTokens)
-	key := "llm:" + utils.MakeHash(fmt.Sprintf("%s|%s|%s|%s", prompt, modelName, tempStr, tokensStr))
+	key := "llm:" + utils.MakeHash(string(promptJSON))
 	rdb := newRawRedis()
 	defer rdb.Close()
 	_ = rdb.Del(ctx, key).Err()
 
 	// First Get from DB
-	rec, err := s.GetLLM(ctx, prompt, modelName)
+	rec, err := s.GetLLM(ctx, string(promptJSON), modelName)
 	require.NoError(t, err)
 	require.NotNil(t, rec)
 	assert.Equal(t, response, string(rec.Response))
@@ -256,7 +249,7 @@ func TestStorage_LLMFlow_WithNilParams(t *testing.T) {
 	ctx := context.Background()
 	prompt := "Test with nil params"
 	modelName := "gpt-4"
-	response := `{"message": "Response without params"}`
+	response := `{"message":"Response without params"}`
 
 	// 将 prompt 转换为 JSON 格式
 	promptJSON, err := json.Marshal(prompt)
@@ -265,14 +258,14 @@ func TestStorage_LLMFlow_WithNilParams(t *testing.T) {
 
 	// Upsert with nil optional parameters
 	llmRecord := &db.LLMRecord{
-		Request:   json.RawMessage(promptJSON),
+		Request:   promptJSON,
 		ModelName: modelName,
 		Response:  responseJSON,
 	}
 	require.NoError(t, s.UpsertLLM(ctx, llmRecord))
 
 	// Read back with same nil parameters
-	rec, err := s.GetLLM(ctx, prompt, modelName)
+	rec, err := s.GetLLM(ctx, string(promptJSON), modelName)
 	require.NoError(t, err)
 	require.NotNil(t, rec)
 	var promptValue string
@@ -313,7 +306,7 @@ func TestStorage_LLMFlow_MixedParams(t *testing.T) {
 	require.NoError(t, s.UpsertLLM(ctx, llmRecord))
 
 	// Read back
-	rec, err := s.GetLLM(ctx, prompt, modelName)
+	rec, err := s.GetLLM(ctx, string(promptJSON), modelName)
 	require.NoError(t, err)
 	require.NotNil(t, rec)
 	assert.NotNil(t, rec.Temperature)

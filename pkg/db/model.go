@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS embedding_cache (
     provider   VARCHAR(128) NOT NULL,    
     -- 数据内容
     input_text TEXT NOT NULL,
-    embedding REAL[] NOT NULL,
+    embedding DOUBLE PRECISION[] NOT NULL,
     -- 元数据
     token_count INTEGER,
     -- 时间管理
@@ -70,6 +70,9 @@ CREATE TABLE IF NOT EXISTS embedding_cache (
     -- 联合唯一索引
     UNIQUE(input_hash, model_name, provider)
 );
+ALTER TABLE IF EXISTS embedding_cache
+    ALTER COLUMN embedding TYPE DOUBLE PRECISION[]
+    USING embedding::DOUBLE PRECISION[];
 CREATE TABLE IF NOT EXISTS llm_cache (
     id SERIAL PRIMARY KEY,
     request_id VARCHAR(255),             -- 请求 ID
