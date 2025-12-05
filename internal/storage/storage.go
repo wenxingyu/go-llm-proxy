@@ -64,12 +64,12 @@ func (s *Storage) Close() {
 // ---------------- Embedding cache ----------------
 
 // GetEmbedding tries Redis first, then Postgres; on hit from Postgres it backfills Redis.
-func (s *Storage) GetEmbedding(ctx context.Context, inputText, modelName, provider string) (*db.EmbeddingRecord, error) {
+func (s *Storage) GetEmbedding(ctx context.Context, inputText, modelName string) (*db.EmbeddingRecord, error) {
 	if s == nil || s.DB == nil || s.Cache == nil {
 		return nil, fmt.Errorf("storage not initialized")
 	}
 
-	hash := utils.MakeEmbeddingCacheKey(inputText, modelName, provider)
+	hash := utils.MakeEmbeddingCacheKey(inputText, modelName)
 	key := "embedding:" + hash
 
 	var rec db.EmbeddingRecord
@@ -84,7 +84,7 @@ func (s *Storage) GetEmbedding(ctx context.Context, inputText, modelName, provid
 		return &rec, nil
 	}
 
-	pgRec, err := s.DB.GetEmbedding(ctx, inputText, modelName, provider)
+	pgRec, err := s.DB.GetEmbedding(ctx, inputText, modelName)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -92,7 +92,6 @@ func (s *Storage) GetEmbedding(ctx context.Context, inputText, modelName, provid
 		logger.Error("Failed to get embedding from Postgres",
 			zap.String("key", key),
 			zap.String("model", modelName),
-			zap.String("provider", provider),
 			zap.Error(err))
 		return nil, err
 	}
@@ -102,7 +101,6 @@ func (s *Storage) GetEmbedding(ctx context.Context, inputText, modelName, provid
 			logger.Warn("Failed to backfill Redis cache for embedding",
 				zap.String("key", key),
 				zap.String("model", modelName),
-				zap.String("provider", provider),
 				zap.Error(err),
 			)
 		}
@@ -118,16 +116,15 @@ func (s *Storage) UpsertEmbedding(ctx context.Context, rec *db.EmbeddingRecord) 
 	if rec == nil {
 		return fmt.Errorf("embedding record cannot be nil")
 	}
-	if rec.InputText == "" || rec.ModelName == "" || rec.Provider == "" {
+	if rec.InputText == "" || rec.ModelName == "" {
 		return fmt.Errorf("embedding record missing required fields")
 	}
 
-	rec.InputHash = utils.MakeEmbeddingCacheKey(rec.InputText, rec.ModelName, rec.Provider)
+	rec.InputHash = utils.MakeEmbeddingCacheKey(rec.InputText, rec.ModelName)
 
 	if err := s.DB.UpsertEmbedding(ctx, rec); err != nil {
 		logger.Error("Failed to upsert embedding to Postgres",
 			zap.String("model", rec.ModelName),
-			zap.String("provider", rec.Provider),
 			zap.Int("embedding_size", len(rec.Embedding)),
 			zap.Error(err))
 		return err
@@ -139,7 +136,6 @@ func (s *Storage) UpsertEmbedding(ctx context.Context, rec *db.EmbeddingRecord) 
 		logger.Warn("Failed to update Redis cache for embedding after DB write",
 			zap.String("key", key),
 			zap.String("model", rec.ModelName),
-			zap.String("provider", rec.Provider),
 			zap.Error(err))
 	}
 	return nil

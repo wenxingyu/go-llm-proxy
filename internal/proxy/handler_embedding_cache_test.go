@@ -19,13 +19,13 @@ import (
 )
 
 type fakeCacheStorage struct {
-	getEmbeddingFn    func(ctx context.Context, inputText, modelName, provider string) (*db.EmbeddingRecord, error)
+	getEmbeddingFn    func(ctx context.Context, inputText, modelName string) (*db.EmbeddingRecord, error)
 	upsertEmbeddingFn func(ctx context.Context, rec *db.EmbeddingRecord) error
 }
 
-func (f *fakeCacheStorage) GetEmbedding(ctx context.Context, inputText, modelName, provider string) (*db.EmbeddingRecord, error) {
+func (f *fakeCacheStorage) GetEmbedding(ctx context.Context, inputText, modelName string) (*db.EmbeddingRecord, error) {
 	if f.getEmbeddingFn != nil {
-		return f.getEmbeddingFn(ctx, inputText, modelName, provider)
+		return f.getEmbeddingFn(ctx, inputText, modelName)
 	}
 	return nil, nil
 }
@@ -61,7 +61,7 @@ func newTestHandlerWithStorage(storage cacheStorage) *Handler {
 func TestHandleEmbeddingCachePreProxy_Hit(t *testing.T) {
 	rec := &db.EmbeddingRecord{Embedding: []float64{0.1, 0.2}}
 	storage := &fakeCacheStorage{
-		getEmbeddingFn: func(ctx context.Context, inputText, modelName, provider string) (*db.EmbeddingRecord, error) {
+		getEmbeddingFn: func(ctx context.Context, inputText, modelName string) (*db.EmbeddingRecord, error) {
 			require.Equal(t, "hello", inputText)
 			return rec, nil
 		},
@@ -85,7 +85,7 @@ func TestHandleEmbeddingCachePreProxy_Hit(t *testing.T) {
 func TestHandleEmbeddingCachePreProxy_Partial(t *testing.T) {
 	callCount := 0
 	storage := &fakeCacheStorage{
-		getEmbeddingFn: func(ctx context.Context, inputText, modelName, provider string) (*db.EmbeddingRecord, error) {
+		getEmbeddingFn: func(ctx context.Context, inputText, modelName string) (*db.EmbeddingRecord, error) {
 			defer func() { callCount++ }()
 			if callCount == 0 {
 				return &db.EmbeddingRecord{Embedding: []float64{0.1, 0.2}}, nil
@@ -111,7 +111,7 @@ func TestHandleEmbeddingCachePreProxy_Partial(t *testing.T) {
 
 func TestHandleEmbeddingCachePreProxy_BypassOnError(t *testing.T) {
 	storage := &fakeCacheStorage{
-		getEmbeddingFn: func(ctx context.Context, inputText, modelName, provider string) (*db.EmbeddingRecord, error) {
+		getEmbeddingFn: func(ctx context.Context, inputText, modelName string) (*db.EmbeddingRecord, error) {
 			return nil, fmt.Errorf("boom")
 		},
 	}
@@ -138,7 +138,6 @@ func TestHandleEmbeddingCachePostResponse_Partial(t *testing.T) {
 
 	meta := &embeddingCacheMetadata{
 		model:       "text-embedding",
-		provider:    "api.example.com",
 		totalInputs: 2,
 		hits: map[int]*db.EmbeddingRecord{
 			0: {Embedding: []float64{0.1, 0.2}},

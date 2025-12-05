@@ -138,7 +138,6 @@ func BenchmarkUpsertEmbedding_WithPreparedStatement(b *testing.B) {
 		_ = pg.UpsertEmbedding(ctx, &EmbeddingRecord{
 			InputText: inputText,
 			ModelName: "text-embedding-ada-002",
-			Provider:  "benchmark-provider",
 			Embedding: embedding,
 		})
 	}

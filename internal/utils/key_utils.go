@@ -11,7 +11,7 @@ func MakeHash(s string) string {
 }
 
 // MakeEmbeddingCacheKey builds the deterministic hash for embedding cache rows.
-// It joins the normalized input payload with model and provider so caches stay unique per vendor.
-func MakeEmbeddingCacheKey(inputText, modelName, provider string) string {
-	return MakeHash(inputText + "|" + modelName + "|" + provider)
+// It joins the normalized input payload with model so caches stay unique per model.
+func MakeEmbeddingCacheKey(inputText, modelName string) string {
+	return MakeHash(inputText + "|" + modelName)
 }

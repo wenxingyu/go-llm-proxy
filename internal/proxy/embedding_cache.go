@@ -9,7 +9,6 @@ import (
 	"go-llm-server/pkg/logger"
 	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -19,7 +18,6 @@ import (
 
 type embeddingCacheMetadata struct {
 	model              string
-	provider           string
 	totalInputs        int
 	hits               map[int]*db.EmbeddingRecord
 	missOrder          []embeddingInputMeta
@@ -116,18 +114,16 @@ func (h *Handler) handleEmbeddingCachePreProxy(w http.ResponseWriter, r *http.Re
 		return false, nil
 	}
 
-	provider := h.resolveEmbeddingProvider(r, modelName)
 	requestID := utils.GetRequestID(r)
 
 	hits := make(map[int]*db.EmbeddingRecord)
 	missOrder := make([]embeddingInputMeta, 0)
 	for _, input := range inputs {
-		rec, err := h.storage.GetEmbedding(r.Context(), input.Normalized, modelName, provider)
+		rec, err := h.storage.GetEmbedding(r.Context(), input.Normalized, modelName)
 		if err != nil {
 			logger.Warn("Embedding cache lookup failed",
 				zap.String("requestId", requestID),
 				zap.String("model", modelName),
-				zap.String("provider", provider),
 				zap.Error(err))
 			w.Header().Set("X-Embedding-Cache", "BYPASS")
 			return false, nil
@@ -174,7 +170,6 @@ func (h *Handler) handleEmbeddingCachePreProxy(w http.ResponseWriter, r *http.Re
 
 	meta := &embeddingCacheMetadata{
 		model:            modelName,
-		provider:         provider,
 		totalInputs:      len(inputs),
 		hits:             hits,
 		missOrder:        missOrder,
@@ -188,28 +183,6 @@ func (h *Handler) handleEmbeddingCachePreProxy(w http.ResponseWriter, r *http.Re
 	}
 
 	return false, meta
-}
-
-func (h *Handler) resolveEmbeddingProvider(r *http.Request, modelName string) string {
-	if h.cfg != nil {
-		if urls, ok := h.cfg.GetModelURLs(modelName); ok && len(urls) > 0 {
-			if parsed, err := url.Parse(urls[0]); err == nil && parsed.Host != "" {
-				return parsed.Host
-			}
-		}
-		if base, ok := h.cfg.TargetMap[r.URL.Path]; ok && base != "" {
-			if parsed, err := url.Parse(base); err == nil && parsed.Host != "" {
-				return parsed.Host
-			}
-		}
-	}
-	if r != nil && r.URL != nil && r.URL.Host != "" {
-		return r.URL.Host
-	}
-	if r != nil && r.Host != "" {
-		return r.Host
-	}
-	return "default"
 }
 
 func extractEmbeddingInputs(raw interface{}) ([]embeddingInputMeta, bool, error) {
@@ -380,7 +353,6 @@ func (h *Handler) handleEmbeddingCachePostResponse(resp *http.Response, meta *em
 		record := &db.EmbeddingRecord{
 			InputText: metaInput.Normalized,
 			ModelName: meta.model,
-			Provider:  meta.provider,
 			Embedding: item.Embedding,
 			RequestID: payload.ID,
 			StartTime: &meta.startTime,
@@ -390,7 +362,6 @@ func (h *Handler) handleEmbeddingCachePostResponse(resp *http.Response, meta *em
 			logger.Warn("Failed to persist embedding cache entry",
 				zap.String("requestId", meta.requestID),
 				zap.String("model", meta.model),
-				zap.String("provider", meta.provider),
 				zap.Error(err))
 		}
 		newRecords[metaInput.Index] = record
@@ -465,7 +436,6 @@ func (h *Handler) handleEmbeddingCachePostResponse(resp *http.Response, meta *em
 	logger.Info("Processed embedding cache miss/partial",
 		zap.String("requestId", meta.requestID),
 		zap.String("model", meta.model),
-		zap.String("provider", meta.provider),
 		zap.String("cacheStatus", cacheStatus),
 		zap.Int("hits", len(meta.hits)),
 		zap.Int("misses", len(newRecords)))

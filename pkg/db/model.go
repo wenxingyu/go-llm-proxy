@@ -11,7 +11,6 @@ type EmbeddingRecord struct {
 	InputHash  string     `json:"input_hash"`
 	InputText  string     `json:"input_text"`
 	ModelName  string     `json:"model_name"`
-	Provider   string     `json:"provider"`
 	RequestID  string     `json:"request_id"`
 	TokenCount *int       `json:"token_count,omitempty"`
 	Embedding  []float64  `json:"embedding"`
@@ -50,8 +49,7 @@ CREATE TABLE IF NOT EXISTS embedding_cache (
     request_id VARCHAR(255),
     -- 核心查找字段
     input_hash CHAR(64) NOT NULL,
-    model_name VARCHAR(128) NOT NULL,
-    provider   VARCHAR(128) NOT NULL,    
+    model_name VARCHAR(128) NOT NULL,   
     -- 数据内容
     input_text TEXT NOT NULL,
     embedding DOUBLE PRECISION[] NOT NULL,
@@ -62,29 +60,24 @@ CREATE TABLE IF NOT EXISTS embedding_cache (
     updated_at TIMESTAMPTZ(3) DEFAULT NOW(),
     start_time TIMESTAMPTZ(3),
     end_time   TIMESTAMPTZ(3),
-    -- 生成列：自动计算耗时 (PostgreSQL 12+ 支持)
     duration_ms INT GENERATED ALWAYS AS (
         CAST(EXTRACT(EPOCH FROM (end_time - start_time)) * 1000 AS INT)
     ) STORED,
     expire_at BIGINT DEFAULT -1,
-    -- 联合唯一索引
-    UNIQUE(input_hash, model_name, provider)
+    CONSTRAINT embedding_cache_input_model_uq UNIQUE(input_hash, model_name) -- 联合唯一索引
 );
-ALTER TABLE IF EXISTS embedding_cache
-    ALTER COLUMN embedding TYPE DOUBLE PRECISION[]
-    USING embedding::DOUBLE PRECISION[];
 CREATE TABLE IF NOT EXISTS llm_cache (
     id SERIAL PRIMARY KEY,
-    request_id VARCHAR(255),             -- 请求 ID
-    request_hash CHAR(64) NOT NULL,      -- 对 request 做 hash
-    request JSONB NOT NULL,              -- 原始 request (JSON格式)
-    model_name VARCHAR(128) NOT NULL,    -- 模型名称
-    temperature NUMERIC(3,2),            -- 可选参数
-    max_tokens INT,                      -- 可选参数
-    response JSONB NOT NULL,             -- 模型返回的文本 (JSON格式)
-    total_tokens INT,                    -- 总 token 数
-    prompt_tokens INT,                   -- prompt token 数
-    completion_tokens INT,               -- completion token 数
+    request_id VARCHAR(255),               -- 请求 ID
+    request_hash CHAR(64) NOT NULL,        -- 对 request 做 hash
+    request JSONB NOT NULL,                -- 原始 request (JSON格式)
+    model_name VARCHAR(128) NOT NULL,      -- 模型名称
+    temperature NUMERIC(3,2),              -- 可选参数
+    max_tokens INT,                        -- 可选参数
+    response JSONB NOT NULL,               -- 模型返回的文本 (JSON格式)
+    total_tokens INT,                      -- 总 token 数
+    prompt_tokens INT,                     -- prompt token 数
+    completion_tokens INT,                 -- completion token 数
     start_time TIMESTAMPTZ(3),             -- 请求开始时间
     end_time TIMESTAMPTZ(3),               -- 请求结束时间
     duration_ms INT GENERATED ALWAYS AS (
@@ -92,7 +85,7 @@ CREATE TABLE IF NOT EXISTS llm_cache (
     ) STORED,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    expire_at BIGINT DEFAULT -1,         -- Unix 时间戳（毫秒），-1 表示永不过期
-    UNIQUE(request_hash, model_name)     -- 保证唯一
+    expire_at BIGINT DEFAULT -1,           -- Unix 时间戳（毫秒），-1 表示永不过期
+    UNIQUE(request_hash, model_name)       -- 保证唯一
 );
 `

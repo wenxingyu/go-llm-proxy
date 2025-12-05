@@ -16,13 +16,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testProvider = "test-provider.local"
-
 func newStorageEmbeddingRecord(inputText, modelName string, embedding []float64) *db.EmbeddingRecord {
 	return &db.EmbeddingRecord{
 		InputText: inputText,
 		ModelName: modelName,
-		Provider:  testProvider,
 		Embedding: embedding,
 	}
 }
@@ -80,7 +77,7 @@ func TestStorage_EmbeddingFlow(t *testing.T) {
 	require.NoError(t, s.UpsertEmbedding(ctx, newStorageEmbeddingRecord(inputText, modelName, embedding)))
 
 	// Read back (should hit Redis immediately)
-	rec, err := s.GetEmbedding(ctx, inputText, modelName, testProvider)
+	rec, err := s.GetEmbedding(ctx, inputText, modelName)
 	require.NoError(t, err)
 	require.NotNil(t, rec)
 	assert.Equal(t, inputText, rec.InputText)
@@ -88,7 +85,7 @@ func TestStorage_EmbeddingFlow(t *testing.T) {
 	assert.Equal(t, embedding, rec.Embedding)
 
 	// Verify value present in Redis by reading the exact key via raw client
-	key := "embedding:" + utils.MakeEmbeddingCacheKey(inputText, modelName, testProvider)
+	key := "embedding:" + utils.MakeEmbeddingCacheKey(inputText, modelName)
 	rdb := newRawRedis()
 	defer rdb.Close()
 	val, err := rdb.Get(ctx, key).Result()
@@ -108,14 +105,14 @@ func TestStorage_GetEmbedding_ReadThrough(t *testing.T) {
 	// Ensure DB has the record, but remove from Redis to test read-through
 	require.NoError(t, s.UpsertEmbedding(ctx, newStorageEmbeddingRecord(inputText, modelName, embedding)))
 
-	key := "embedding:" + utils.MakeEmbeddingCacheKey(inputText, modelName, testProvider)
+	key := "embedding:" + utils.MakeEmbeddingCacheKey(inputText, modelName)
 	rdb := newRawRedis()
 	defer rdb.Close()
 	_ = rdb.Del(ctx, key).Err()
 
 	// First Get should fetch from DB and backfill Redis
 	start := time.Now()
-	rec, err := s.GetEmbedding(ctx, inputText, modelName, testProvider)
+	rec, err := s.GetEmbedding(ctx, inputText, modelName)
 	require.NoError(t, err)
 	require.NotNil(t, rec)
 	assert.Equal(t, embedding, rec.Embedding)
@@ -123,7 +120,7 @@ func TestStorage_GetEmbedding_ReadThrough(t *testing.T) {
 
 	// Second Get should be faster (cache hit)
 	start = time.Now()
-	_, err = s.GetEmbedding(ctx, inputText, modelName, testProvider)
+	_, err = s.GetEmbedding(ctx, inputText, modelName)
 	require.NoError(t, err)
 	secondLatency := time.Since(start)
 
