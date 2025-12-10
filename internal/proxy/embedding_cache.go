@@ -16,6 +16,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const embeddingCacheBypassHeader = "X-Embedding-Cache-Bypass"
+
 type embeddingCacheMetadata struct {
 	model              string
 	totalInputs        int
@@ -58,6 +60,9 @@ type embeddingUsage struct {
 
 func (h *Handler) shouldUseEmbeddingCache(r *http.Request) bool {
 	if h.storage == nil || r == nil {
+		return false
+	}
+	if r.Header.Get(embeddingCacheBypassHeader) != "" {
 		return false
 	}
 	if r.Method != http.MethodPost {

@@ -66,6 +66,8 @@ type cacheContextKey struct{}
 var llmCacheContextKey = cacheContextKey{}
 var embeddingCacheContextKey = cacheContextKey{}
 
+const llmCacheBypassHeader = "X-LLM-Cache-Bypass"
+
 type llmCacheMetadata struct {
 	prompt      string
 	model       string
@@ -289,7 +291,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) shouldUseLLMCache(r *http.Request) bool {
-	return h.storage != nil && r != nil && r.URL.Path == "/chat/completions" && r.Method == http.MethodPost
+	if h.storage == nil || r == nil {
+		return false
+	}
+
+	if r.Header.Get(llmCacheBypassHeader) != "" {
+		return false
+	}
+
+	return r.URL.Path == "/chat/completions" && r.Method == http.MethodPost
 }
 
 func (h *Handler) handleLLMCachePreProxy(w http.ResponseWriter, r *http.Request) (bool, *llmCacheMetadata) {
