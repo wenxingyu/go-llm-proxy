@@ -359,7 +359,7 @@ func (h *Handler) handleEmbeddingCachePostResponse(resp *http.Response, meta *em
 			InputText: metaInput.Normalized,
 			ModelName: meta.model,
 			Embedding: item.Embedding,
-			RequestID: payload.ID,
+			RequestID: meta.requestID,
 			StartTime: &meta.startTime,
 			EndTime:   &endTime,
 		}

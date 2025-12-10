@@ -56,13 +56,13 @@ CREATE TABLE IF NOT EXISTS embedding_cache (
     -- 元数据
     token_count INTEGER,
     -- 时间管理
-    created_at TIMESTAMPTZ(3) DEFAULT NOW(),
-    updated_at TIMESTAMPTZ(3) DEFAULT NOW(),
     start_time TIMESTAMPTZ(3),
     end_time   TIMESTAMPTZ(3),
     duration_ms INT GENERATED ALWAYS AS (
         CAST(EXTRACT(EPOCH FROM (end_time - start_time)) * 1000 AS INT)
     ) STORED,
+	created_at TIMESTAMPTZ(3) DEFAULT NOW(),
+    updated_at TIMESTAMPTZ(3) DEFAULT NOW(),
     expire_at BIGINT DEFAULT -1,
     CONSTRAINT embedding_cache_input_model_uq UNIQUE(input_hash, model_name) -- 联合唯一索引
 );
