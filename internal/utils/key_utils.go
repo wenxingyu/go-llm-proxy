@@ -3,6 +3,7 @@ package utils
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 )
 
 func MakeHash(s string) string {
@@ -11,7 +12,11 @@ func MakeHash(s string) string {
 }
 
 // MakeEmbeddingCacheKey builds the deterministic hash for embedding cache rows.
-// It joins the normalized input payload with model so caches stay unique per model.
-func MakeEmbeddingCacheKey(inputText, modelName string) string {
-	return MakeHash(inputText + "|" + modelName)
+// It joins the normalized input payload with model and optional dimensions so caches stay unique per model/dimension.
+func MakeEmbeddingCacheKey(inputText, modelName string, dimensions *int) string {
+	key := inputText + "|" + modelName
+	if dimensions != nil {
+		key = key + fmt.Sprintf("|%d", *dimensions)
+	}
+	return MakeHash(key)
 }

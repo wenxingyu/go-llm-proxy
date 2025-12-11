@@ -20,6 +20,7 @@ const (
 			input_hash,
 			input_text,
 			model_name,
+			dimensions,
 			embedding,
 			request_id,
 			token_count,
@@ -27,7 +28,7 @@ const (
 			end_time,
 			expire_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (input_hash, model_name)
 		DO UPDATE SET
 			embedding = EXCLUDED.embedding,
@@ -35,6 +36,7 @@ const (
 			token_count = EXCLUDED.token_count,
 			start_time = EXCLUDED.start_time,
 			end_time = EXCLUDED.end_time,
+			dimensions = EXCLUDED.dimensions,
 			expire_at = EXCLUDED.expire_at,
 			updated_at = NOW()`
 
@@ -50,6 +52,7 @@ const (
 			input_hash,
 			input_text,
 			model_name,
+			dimensions,
 			request_id,
 			token_count,
 			embedding,
@@ -73,6 +76,7 @@ const (
 			input_hash,
 			input_text,
 			model_name,
+			dimensions,
 			request_id,
 			token_count,
 			embedding,
@@ -189,7 +193,7 @@ func (p *Postgres) UpsertEmbedding(ctx context.Context, rec *EmbeddingRecord) er
 		return fmt.Errorf("embedding record missing required fields")
 	}
 	if rec.InputHash == "" {
-		rec.InputHash = utils.MakeEmbeddingCacheKey(rec.InputText, rec.ModelName)
+		rec.InputHash = utils.MakeEmbeddingCacheKey(rec.InputText, rec.ModelName, rec.Dimensions)
 	}
 	if rec.ExpireAt == nil {
 		defaultExpire := int64(-1)
@@ -200,6 +204,7 @@ func (p *Postgres) UpsertEmbedding(ctx context.Context, rec *EmbeddingRecord) er
 		rec.InputHash,
 		rec.InputText,
 		rec.ModelName,
+		rec.Dimensions,
 		rec.Embedding,
 		rec.RequestID,
 		rec.TokenCount,
@@ -227,9 +232,9 @@ func (p *Postgres) UpsertLLM(ctx context.Context, rec *LLMRecord) error {
 	return nil
 }
 
-// GetEmbedding retrieves an embedding record by input and model
-func (p *Postgres) GetEmbedding(ctx context.Context, inputText, modelName string) (*EmbeddingRecord, error) {
-	hash := utils.MakeEmbeddingCacheKey(inputText, modelName)
+// GetEmbedding retrieves an embedding record by input, model and optional dimensions
+func (p *Postgres) GetEmbedding(ctx context.Context, inputText, modelName string, dimensions *int) (*EmbeddingRecord, error) {
+	hash := utils.MakeEmbeddingCacheKey(inputText, modelName, dimensions)
 
 	var record EmbeddingRecord
 	err := p.Pool.QueryRow(ctx, sqlGetEmbedding, hash, modelName).Scan(
@@ -237,6 +242,7 @@ func (p *Postgres) GetEmbedding(ctx context.Context, inputText, modelName string
 		&record.InputHash,
 		&record.InputText,
 		&record.ModelName,
+		&record.Dimensions,
 		&record.RequestID,
 		&record.TokenCount,
 		&record.Embedding,
@@ -291,6 +297,7 @@ func (p *Postgres) ListEmbeddings(ctx context.Context, modelName string, limit, 
 			&record.InputHash,
 			&record.InputText,
 			&record.ModelName,
+			&record.Dimensions,
 			&record.RequestID,
 			&record.TokenCount,
 			&record.Embedding,

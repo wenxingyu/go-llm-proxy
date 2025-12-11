@@ -44,7 +44,7 @@ func ensureJSONFormat(input string) (json.RawMessage, error) {
 }
 
 type cacheStorage interface {
-	GetEmbedding(ctx context.Context, inputText, modelName string) (*db.EmbeddingRecord, error)
+	GetEmbedding(ctx context.Context, inputText, modelName string, dimensions *int) (*db.EmbeddingRecord, error)
 	UpsertEmbedding(ctx context.Context, rec *db.EmbeddingRecord) error
 	GetLLM(ctx context.Context, request, modelName string) (*db.LLMRecord, error)
 	UpsertLLM(ctx context.Context, rec *db.LLMRecord) error

@@ -11,6 +11,7 @@ type EmbeddingRecord struct {
 	InputHash  string     `json:"input_hash"`
 	InputText  string     `json:"input_text"`
 	ModelName  string     `json:"model_name"`
+	Dimensions *int       `json:"dimensions,omitempty"` // embedding dimensions (nullable)
 	RequestID  string     `json:"request_id"`
 	TokenCount *int       `json:"token_count,omitempty"`
 	Embedding  []float64  `json:"embedding"`
@@ -50,6 +51,7 @@ CREATE TABLE IF NOT EXISTS embedding_cache (
     -- 核心查找字段
     input_hash CHAR(64) NOT NULL,
     model_name VARCHAR(128) NOT NULL,   
+    dimensions INTEGER, -- embedding 的维度，可为空
     -- 数据内容
     input_text TEXT NOT NULL,
     embedding DOUBLE PRECISION[] NOT NULL,
