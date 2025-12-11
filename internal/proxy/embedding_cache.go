@@ -19,6 +19,8 @@ import (
 
 const embeddingCacheBypassHeader = "X-Embedding-Cache-Bypass"
 
+var embeddingCacheContextKey = cacheContextKey{}
+
 type embeddingCacheMetadata struct {
 	model      string
 	total      int
