@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"testing"
 
 	"go-llm-server/internal/config"
@@ -22,9 +23,14 @@ func setupTestDB(t *testing.T) *Postgres {
 	// Use test database configuration
 	// In a real test environment, you might want to use testcontainers
 	// or a dedicated test database
+	port, err := strconv.Atoi(os.Getenv("DB_PORT"))
+	if err != nil {
+		port = 5432
+	}
+
 	cfg := config.DatabaseConfig{
 		Host:            os.Getenv("DB_HOST"),
-		Port:            5432,
+		Port:            port,
 		User:            os.Getenv("DB_USER"),
 		Password:        os.Getenv("DB_PASSWORD"),
 		DBName:          os.Getenv("DB_NAME"),
@@ -74,12 +80,11 @@ func generateLongText(length int) string {
 }
 
 func newTestEmbeddingRecord(inputText, modelName string, embedding []float64) *EmbeddingRecord {
-	d := len(embedding)
 	return &EmbeddingRecord{
 		InputText:  inputText,
 		ModelName:  modelName,
 		Embedding:  embedding,
-		Dimensions: &d,
+		Dimensions: nil,
 	}
 }
 
@@ -187,8 +192,7 @@ func TestUpsertEmbeddingUpdate(t *testing.T) {
 	}
 
 	// Verify first insertion
-	dim := len(originalEmbedding)
-	record, err := pg.GetEmbedding(ctx, inputText, modelName, &dim)
+	record, err := pg.GetEmbedding(ctx, inputText, modelName, nil)
 	if err != nil {
 		t.Fatalf("Should be able to retrieve first embedding: %v", err)
 	}
@@ -203,8 +207,7 @@ func TestUpsertEmbeddingUpdate(t *testing.T) {
 	}
 
 	// Verify update
-	dim = len(updatedEmbedding)
-	record, err = pg.GetEmbedding(ctx, inputText, modelName, &dim)
+	record, err = pg.GetEmbedding(ctx, inputText, modelName, nil)
 	if err != nil {
 		t.Fatalf("Should be able to retrieve updated embedding: %v", err)
 	}
@@ -367,8 +370,7 @@ func TestGetEmbeddingDataIntegrity(t *testing.T) {
 	}
 
 	// Retrieve and verify data integrity
-	dim := len(embedding)
-	record, err := pg.GetEmbedding(ctx, inputText, modelName, &dim)
+	record, err := pg.GetEmbedding(ctx, inputText, modelName, nil)
 	if err != nil {
 		t.Fatalf("Retrieve should succeed: %v", err)
 	}
@@ -388,7 +390,7 @@ func TestGetEmbeddingDataIntegrity(t *testing.T) {
 	}
 
 	// Verify hash calculation
-	expectedHash := utils.MakeEmbeddingCacheKey(inputText, modelName, &dim)
+	expectedHash := utils.MakeEmbeddingCacheKey(inputText, modelName, nil)
 	if record.InputHash != expectedHash {
 		t.Errorf("InputHash should match calculated hash: got %s, expected %s", record.InputHash, expectedHash)
 	}
@@ -431,13 +433,12 @@ func TestEmbeddingHashConsistency(t *testing.T) {
 	}
 
 	// Retrieve and verify hash consistency
-	dim := len(embedding)
-	record, err := pg.GetEmbedding(ctx, inputText, modelName, &dim)
+	record, err := pg.GetEmbedding(ctx, inputText, modelName, nil)
 	if err != nil {
 		t.Fatalf("Retrieve should succeed: %v", err)
 	}
 
-	expectedHash := utils.MakeEmbeddingCacheKey(inputText, modelName, &dim)
+	expectedHash := utils.MakeEmbeddingCacheKey(inputText, modelName, nil)
 	if record.InputHash != expectedHash {
 		t.Errorf("Hash should be consistent: got %s, expected %s", record.InputHash, expectedHash)
 	}
@@ -480,8 +481,7 @@ func TestEmbeddingConcurrentAccess(t *testing.T) {
 	}
 
 	// Verify final state
-	dim := len(embedding)
-	record, err := pg.GetEmbedding(ctx, inputText, modelName, &dim)
+	record, err := pg.GetEmbedding(ctx, inputText, modelName, nil)
 	if err != nil {
 		t.Fatalf("Retrieve should succeed: %v", err)
 	}
@@ -547,8 +547,7 @@ func TestEmbeddingEdgeCases(t *testing.T) {
 					t.Errorf("Unexpected error for %s: %v", tt.name, err)
 				} else {
 					// Test retrieval if upsert succeeded
-					d := len(tt.embedding)
-					record, err := pg.GetEmbedding(ctx, tt.inputText, tt.modelName, &d)
+					record, err := pg.GetEmbedding(ctx, tt.inputText, tt.modelName, nil)
 					if err != nil {
 						t.Errorf("Retrieve should succeed for %s: %v", tt.name, err)
 					} else if !equalFloatSlices(tt.embedding, record.Embedding) {
@@ -616,8 +615,7 @@ func BenchmarkGetEmbedding(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		dim := len(embedding)
-		_, err := pg.GetEmbedding(ctx, inputText, modelName, &dim)
+		_, err := pg.GetEmbedding(ctx, inputText, modelName, nil)
 		if err != nil {
 			b.Fatalf("GetEmbedding failed: %v", err)
 		}

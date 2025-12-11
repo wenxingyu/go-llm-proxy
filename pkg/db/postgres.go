@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"go-llm-server/internal/utils"
+	"strings"
 	"time"
 
 	"go-llm-server/internal/config"
@@ -102,6 +103,9 @@ const (
 	sqlCountLLMs       = `SELECT COUNT(*) FROM llm_cache WHERE model_name = $1`
 )
 
+// schemaMigrationLockID synchronizes schema creation across processes via pg_advisory_lock.
+const schemaMigrationLockID int64 = 0x676f6c6c6d // "gollm" in hex
+
 // Postgres wraps a pgx connection pool
 type Postgres struct {
 	Pool *pgxpool.Pool
@@ -177,11 +181,37 @@ func (p *Postgres) createTables(ctx context.Context) error {
 	if p == nil || p.Pool == nil {
 		return fmt.Errorf("postgres pool is not initialized")
 	}
-	// Create request_cache
-	if _, err := p.Pool.Exec(ctx, ddl); err != nil {
-		logger.Error("failed to create table public.request_cache", zap.Error(err))
-		return err
+
+	conn, err := p.Pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to acquire connection for schema creation: %w", err)
 	}
+	defer conn.Release()
+
+	lockCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	if _, err := conn.Exec(lockCtx, "SELECT pg_advisory_lock($1)", schemaMigrationLockID); err != nil {
+		return fmt.Errorf("failed to acquire schema lock: %w", err)
+	}
+	defer func() {
+		if _, unlockErr := conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", schemaMigrationLockID); unlockErr != nil {
+			logger.Warn("failed to release schema lock", zap.Error(unlockErr))
+		}
+	}()
+
+	statements := strings.Split(ddl, ";")
+	for _, stmt := range statements {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+		if _, err := conn.Exec(ctx, stmt); err != nil {
+			logger.Error("failed to apply schema statement", zap.String("statement", stmt), zap.Error(err))
+			return err
+		}
+	}
+
 	return nil
 }
 

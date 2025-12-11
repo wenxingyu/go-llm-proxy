@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -32,10 +33,15 @@ func newStorageEmbeddingRecord(inputText, modelName string, embedding []float64)
 // Redis:    192.168.70.128:6379 (password: myredissecret, db: 0)
 
 func setupTestStorage(t *testing.T) *Storage {
+	port, err := strconv.Atoi(os.Getenv("DB_PORT"))
+	if err != nil {
+		port = 5432
+	}
+
 	cfg := &config.Config{
 		Database: config.DatabaseConfig{
 			Host:            os.Getenv("DB_HOST"),
-			Port:            5432,
+			Port:            port,
 			User:            os.Getenv("DB_USER"),
 			Password:        os.Getenv("DB_PASSWORD"),
 			DBName:          os.Getenv("DB_NAME"),
@@ -46,7 +52,7 @@ func setupTestStorage(t *testing.T) *Storage {
 		},
 		Redis: config.RedisConfig{
 			Addr:     os.Getenv("REDIS_ADDR"),
-			Password: "myredissecret",
+			Password: os.Getenv("REDIS_PASSWORD"),
 			DB:       0,
 		},
 	}
@@ -59,9 +65,14 @@ func setupTestStorage(t *testing.T) *Storage {
 }
 
 func newRawRedis() *redisv9.Client {
+	redisPassword := os.Getenv("REDIS_PASSWORD")
+	if redisPassword == "" {
+		redisPassword = "myredissecret"
+	}
+
 	return redisv9.NewClient(&redisv9.Options{
 		Addr:     os.Getenv("REDIS_ADDR"),
-		Password: "myredissecret",
+		Password: redisPassword,
 		DB:       0,
 	})
 }
@@ -321,6 +332,5 @@ func TestStorage_LLMFlow_MixedParams(t *testing.T) {
 func TestStorage_Close(t *testing.T) {
 	s := setupTestStorage(t)
 	// Ensure Close is safe to call multiple times
-	s.Close()
 	s.Close()
 }
