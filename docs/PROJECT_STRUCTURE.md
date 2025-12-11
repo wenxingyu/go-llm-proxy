@@ -173,6 +173,11 @@ model_routes:
       - "https://open.bigmodel.cn/api/paas"
       - "https://open.bigmodel.cn/api/paas/v2"
       - "https://open.bigmodel.cn/api/paas/v3"
+
+# 模型别名（可选）
+model_aliases:
+  "my-gpt": "gpt-4"             # 客户端使用 my-gpt，内部映射到 gpt-4
+  "fast-embedding": "embedding-2"
 ```
 
 ### 核心特性

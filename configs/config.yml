@@ -40,3 +40,6 @@ model_routes:
     urls:
       - "https://open.bigmodel.cn/api/paas/v3"
       - "https://open.bigmodel.cn/api/paas/v4"
+model_aliases:
+  "my-gpt": "gpt-4"
+  "fast-embedding": "embedding-2"

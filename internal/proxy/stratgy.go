@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"go-llm-server/internal/config"
 	"go-llm-server/internal/utils"
 	"go-llm-server/pkg/logger"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"go.uber.org/zap"
@@ -23,11 +25,13 @@ type URLRouteStrategy interface {
 // ModelSpecifyStrategy 聊天完成路由策略
 type ModelSpecifyStrategy struct {
 	lbManager *LoadBalancerManager
+	cfg       *config.Config
 }
 
-func NewModelSpecifyStrategy(lbManager *LoadBalancerManager) *ModelSpecifyStrategy {
+func NewModelSpecifyStrategy(lbManager *LoadBalancerManager, cfg *config.Config) *ModelSpecifyStrategy {
 	return &ModelSpecifyStrategy{
 		lbManager: lbManager,
+		cfg:       cfg,
 	}
 }
 
@@ -81,13 +85,30 @@ func (s *ModelSpecifyStrategy) extractModelFromRequest(request *http.Request) (s
 		return "", fmt.Errorf("failed to decode request body: %w", err)
 	}
 
-	// Restore the request body for subsequent reads
-	request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-
-	if chatReq.Model == "" {
+	resolvedModel := s.resolveModelName(chatReq.Model)
+	if resolvedModel == "" {
 		return "", fmt.Errorf("model field is required")
 	}
-	return chatReq.Model, nil
+
+	// When alias resolves differently, update payload to use canonical model
+	if resolvedModel != chatReq.Model {
+		var payload map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &payload); err == nil {
+			payload["model"] = resolvedModel
+			if newBody, err := json.Marshal(payload); err == nil {
+				bodyBytes = newBody
+			}
+		}
+	}
+
+	// Restore the request body for subsequent reads
+	request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	request.ContentLength = int64(len(bodyBytes))
+	if len(bodyBytes) > 0 {
+		request.Header.Set("Content-Length", strconv.Itoa(len(bodyBytes)))
+	}
+
+	return resolvedModel, nil
 }
 
 func (s *ModelSpecifyStrategy) getLoadBalancedURL(model, fallbackURL string, request *http.Request) string {
@@ -119,4 +140,11 @@ func (s *DefaultStrategy) ShouldApply(path string) bool {
 
 func (s *DefaultStrategy) GetTargetURL(request *http.Request, baseURL string) (*url.URL, error) {
 	return utils.GetTargetURLWithCache(baseURL, request.URL.Path)
+}
+
+func (s *ModelSpecifyStrategy) resolveModelName(model string) string {
+	if s == nil || s.cfg == nil {
+		return model
+	}
+	return s.cfg.ResolveModel(model)
 }

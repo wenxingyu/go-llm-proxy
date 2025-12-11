@@ -106,7 +106,7 @@ func NewHandler(cfg *config.Config) *Handler {
         cfg:       cfg,
         lbManager: lbManager,
         strategies: []URLRouteStrategy{
-            NewModelSpecifyStrategy(lbManager),
+            NewModelSpecifyStrategy(lbManager, cfg),
             &DefaultStrategy{},
         },
     }
@@ -190,7 +190,7 @@ func (s *CustomStrategy) getRequestID() string {
 
 ```go
 strategies: []URLRouteStrategy{
-    NewModelSpecifyStrategy(lbManager),
+    NewModelSpecifyStrategy(lbManager, cfg),
     NewCustomStrategy(lbManager),  // 添加新策略
     &DefaultStrategy{},
 },

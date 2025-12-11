@@ -103,6 +103,47 @@ func TestLoadConfigDefaultFile(t *testing.T) {
 	}
 }
 
+func TestResolveModel(t *testing.T) {
+	config := &Config{
+		ModelAlias: map[string]string{
+			"my-gpt":      "gpt-4",
+			"other-id":    "claude-3",
+			"empty-alias": "",
+		},
+	}
+
+	tests := []struct {
+		name           string
+		model          string
+		expectedResult string
+	}{
+		{
+			name:           "known alias resolves to canonical",
+			model:          "my-gpt",
+			expectedResult: "gpt-4",
+		},
+		{
+			name:           "unknown alias falls back to original",
+			model:          "no-alias",
+			expectedResult: "no-alias",
+		},
+		{
+			name:           "empty alias value falls back",
+			model:          "empty-alias",
+			expectedResult: "empty-alias",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := config.ResolveModel(tt.model)
+			if result != tt.expectedResult {
+				t.Errorf("ResolveModel(%s) = %s, expected %s", tt.model, result, tt.expectedResult)
+			}
+		})
+	}
+}
+
 // TestGetModelURLs tests model URL retrieval functionality
 func TestGetModelURLs(t *testing.T) {
 	config := &Config{
@@ -267,6 +308,8 @@ model_routes:
     urls:
       - "https://api.anthropic.com/v1"
       - "https://api.anthropic.com/v2"
+model_aliases:
+  "my-gpt": "gpt-4"
 port: 9090
 `
 

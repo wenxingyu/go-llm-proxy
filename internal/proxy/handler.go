@@ -93,7 +93,7 @@ func NewHandler(cfg *config.Config) *Handler {
 		cfg:       cfg,
 		lbManager: manager,
 		strategies: []URLRouteStrategy{
-			NewModelSpecifyStrategy(manager),
+			NewModelSpecifyStrategy(manager, cfg),
 			NewDefaultStrategy(),
 		},
 		storage: storageInstance,
@@ -121,6 +121,21 @@ func (h *Handler) InitLoadBalancers() {
 				zap.String("model", model),
 				zap.Strings("urls", urls))
 		}
+	}
+
+	for alias, canonical := range h.cfg.ModelAlias {
+		urls, exists := h.cfg.GetModelURLs(canonical)
+		if !exists {
+			logger.Warn("Alias has no target model routes configured",
+				zap.String("alias", alias),
+				zap.String("canonical", canonical))
+			continue
+		}
+		h.lbManager.AddLoadBalancer(alias, urls)
+		logger.Info("Initialized load balancer for alias",
+			zap.String("alias", alias),
+			zap.String("canonical", canonical),
+			zap.Strings("urls", urls))
 	}
 }
 

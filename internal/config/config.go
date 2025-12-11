@@ -23,7 +23,8 @@ type RateLimitConfig struct {
 type Config struct {
 	ProxyURL    string                 `yaml:"proxy_url"`
 	TargetMap   map[string]string      `yaml:"target_map"`
-	ModelRoutes map[string]interface{} `yaml:"model_routes"` // 支持字符串或ModelRoute
+	ModelRoutes map[string]interface{} `yaml:"model_routes"`  // 支持字符串或ModelRoute
+	ModelAlias  map[string]string      `yaml:"model_aliases"` // 自定义别名到真实模型的映射
 	Port        int                    `yaml:"port"`
 	RateLimit   RateLimitConfig        `yaml:"rate_limit"`
 	LogBody     bool                   `yaml:"log_body"` // 是否记录请求体
@@ -120,4 +121,15 @@ func (c *Config) GetModelURLs(model string) ([]string, bool) {
 
 func (c *Config) HasRateLimit() bool {
 	return c.RateLimit.Rate > 0 && c.RateLimit.Burst > 0
+}
+
+// ResolveModel 将别名映射为真实模型名称，未配置时返回原值
+func (c *Config) ResolveModel(model string) string {
+	if c == nil {
+		return model
+	}
+	if canonical, ok := c.ModelAlias[model]; ok && canonical != "" {
+		return canonical
+	}
+	return model
 }

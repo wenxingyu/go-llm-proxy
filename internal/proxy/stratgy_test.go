@@ -5,12 +5,14 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"go-llm-server/internal/config"
 )
 
 // TestModelSpecifyStrategy_ShouldApply 测试模型指定策略的应用条件
 func TestModelSpecifyStrategy_ShouldApply(t *testing.T) {
 	lbManager := NewLoadBalancerManager()
-	strategy := NewModelSpecifyStrategy(lbManager)
+	strategy := NewModelSpecifyStrategy(lbManager, nil)
 
 	tests := []struct {
 		name     string
@@ -57,7 +59,7 @@ func TestModelSpecifyStrategy_ShouldApply(t *testing.T) {
 // TestModelSpecifyStrategy_ExtractModelFromRequest 测试从请求中提取模型
 func TestModelSpecifyStrategy_ExtractModelFromRequest(t *testing.T) {
 	lbManager := NewLoadBalancerManager()
-	strategy := NewModelSpecifyStrategy(lbManager)
+	strategy := NewModelSpecifyStrategy(lbManager, nil)
 
 	tests := []struct {
 		name        string
@@ -121,10 +123,38 @@ func TestModelSpecifyStrategy_ExtractModelFromRequest(t *testing.T) {
 	}
 }
 
+func TestModelSpecifyStrategy_ExtractModelFromRequestWithAlias(t *testing.T) {
+	cfg := &config.Config{
+		ModelAlias: map[string]string{
+			"alias-model": "real-model",
+		},
+	}
+	lbManager := NewLoadBalancerManager()
+	strategy := NewModelSpecifyStrategy(lbManager, cfg)
+
+	req, err := http.NewRequest("POST", "/chat/completions", strings.NewReader(`{"model": "alias-model", "messages": [{"role": "user","content": "hi"}]}`))
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+
+	model, err := strategy.extractModelFromRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if model != "real-model" {
+		t.Fatalf("expected resolved model real-model, got %s", model)
+	}
+
+	bodyBytes, _ := io.ReadAll(req.Body)
+	if !strings.Contains(string(bodyBytes), "real-model") {
+		t.Fatalf("expected request body to contain resolved model, got %s", string(bodyBytes))
+	}
+}
+
 // TestModelSpecifyStrategy_GetLoadBalancedURL 测试负载均衡URL获取
 func TestModelSpecifyStrategy_GetLoadBalancedURL(t *testing.T) {
 	lbManager := NewLoadBalancerManager()
-	strategy := NewModelSpecifyStrategy(lbManager)
+	strategy := NewModelSpecifyStrategy(lbManager, nil)
 
 	// 添加测试负载均衡器
 	lbManager.AddLoadBalancer("gpt-4", []string{"https://api1.example.com", "https://api2.example.com"})
@@ -181,7 +211,7 @@ func TestModelSpecifyStrategy_GetLoadBalancedURL(t *testing.T) {
 // TestModelSpecifyStrategy_GetTargetURL 测试模型指定策略的目标URL获取
 func TestModelSpecifyStrategy_GetTargetURL(t *testing.T) {
 	lbManager := NewLoadBalancerManager()
-	strategy := NewModelSpecifyStrategy(lbManager)
+	strategy := NewModelSpecifyStrategy(lbManager, nil)
 
 	// Add test load balancers
 	lbManager.AddLoadBalancer("gpt-4", []string{"https://api1.example.com"})
@@ -352,7 +382,7 @@ func TestDefaultStrategy_GetTargetURL(t *testing.T) {
 // TestNewModelSpecifyStrategy 测试模型指定策略构造函数
 func TestNewModelSpecifyStrategy(t *testing.T) {
 	lbManager := NewLoadBalancerManager()
-	strategy := NewModelSpecifyStrategy(lbManager)
+	strategy := NewModelSpecifyStrategy(lbManager, nil)
 
 	if strategy == nil {
 		t.Error("期望非空策略")
@@ -374,7 +404,7 @@ func TestNewDefaultStrategy(t *testing.T) {
 // BenchmarkModelSpecifyStrategy_ShouldApply 基准测试：策略应用检查
 func BenchmarkModelSpecifyStrategy_ShouldApply(b *testing.B) {
 	lbManager := NewLoadBalancerManager()
-	strategy := NewModelSpecifyStrategy(lbManager)
+	strategy := NewModelSpecifyStrategy(lbManager, nil)
 	path := "/chat/completions"
 
 	b.ResetTimer()
@@ -386,7 +416,7 @@ func BenchmarkModelSpecifyStrategy_ShouldApply(b *testing.B) {
 // BenchmarkModelSpecifyStrategy_ExtractModelFromRequest 基准测试：模型提取
 func BenchmarkModelSpecifyStrategy_ExtractModelFromRequest(b *testing.B) {
 	lbManager := NewLoadBalancerManager()
-	strategy := NewModelSpecifyStrategy(lbManager)
+	strategy := NewModelSpecifyStrategy(lbManager, nil)
 
 	requestBody := `{"model": "gpt-4", "messages": [{"role": "user", "content": "hello world"}]}`
 	req, _ := http.NewRequest("POST", "/chat/completions", strings.NewReader(requestBody))
@@ -401,7 +431,7 @@ func BenchmarkModelSpecifyStrategy_ExtractModelFromRequest(b *testing.B) {
 // BenchmarkModelSpecifyStrategy_GetLoadBalancedURL 基准测试：负载均衡URL获取
 func BenchmarkModelSpecifyStrategy_GetLoadBalancedURL(b *testing.B) {
 	lbManager := NewLoadBalancerManager()
-	strategy := NewModelSpecifyStrategy(lbManager)
+	strategy := NewModelSpecifyStrategy(lbManager, nil)
 
 	lbManager.AddLoadBalancer("gpt-4", []string{"https://api1.example.com", "https://api2.example.com"})
 	req, _ := http.NewRequest("POST", "/chat/completions", nil)
@@ -438,7 +468,7 @@ func BenchmarkDefaultStrategy_GetTargetURL(b *testing.B) {
 // BenchmarkModelSpecifyStrategy_GetTargetURL_Complete 基准测试：模型指定策略完整目标URL获取
 func BenchmarkModelSpecifyStrategy_GetTargetURL_Complete(b *testing.B) {
 	lbManager := NewLoadBalancerManager()
-	strategy := NewModelSpecifyStrategy(lbManager)
+	strategy := NewModelSpecifyStrategy(lbManager, nil)
 
 	lbManager.AddLoadBalancer("gpt-4", []string{"https://api1.example.com"})
 
