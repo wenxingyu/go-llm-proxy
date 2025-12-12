@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"bytes"
-	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"go-llm-server/internal/utils"
@@ -14,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -52,8 +52,10 @@ type embeddingResponseDatum struct {
 }
 
 type embeddingUsage struct {
-	PromptTokens *int `json:"prompt_tokens,omitempty"`
-	TotalTokens  *int `json:"total_tokens,omitempty"`
+	PromptTokens        int     `json:"prompt_tokens"`
+	TotalTokens         int     `json:"total_tokens"`
+	CompletionTokens    int     `json:"completion_tokens"`
+	PromptTokensDetails *string `json:"prompt_tokens_details"`
 }
 
 // shouldUseEmbeddingCache 保持原判断：storage 存在, POST, URL 包含 embeddings，并且未显式绕过
@@ -77,8 +79,8 @@ func (h *Handler) handleEmbeddingCachePreProxy(w http.ResponseWriter, r *http.Re
 	if r.Body == nil {
 		return false, nil
 	}
-
 	bodyBytes, err := io.ReadAll(r.Body)
+	defer func() { _ = r.Body.Close() }()
 	if err != nil {
 		logger.Warn("embedding-cache: failed to read request body",
 			zap.String("requestId", utils.GetRequestID(r)),
@@ -87,12 +89,11 @@ func (h *Handler) handleEmbeddingCachePreProxy(w http.ResponseWriter, r *http.Re
 		r.Body = io.NopCloser(bytes.NewReader(nil))
 		return false, nil
 	}
-	_ = r.Body.Close()
-	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-
 	if len(bodyBytes) == 0 {
 		return false, nil
 	}
+
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
 	var payload map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
@@ -112,22 +113,7 @@ func (h *Handler) handleEmbeddingCachePreProxy(w http.ResponseWriter, r *http.Re
 		return false, nil
 	}
 
-	var dimensions *int
-	if dimVal, ok := payload["dimensions"]; ok {
-		switch v := dimVal.(type) {
-		case float64:
-			d := int(v)
-			dimensions = &d
-		case int:
-			d := v
-			dimensions = &d
-		case json.Number:
-			if parsed, err := v.Int64(); err == nil {
-				d := int(parsed)
-				dimensions = &d
-			}
-		}
-	}
+	dimensions := extractDimensionsField(payload)
 
 	inputs, inputWasArray, err := extractEmbeddingInputs(inputRaw)
 	if err != nil || len(inputs) == 0 {
@@ -145,8 +131,8 @@ func (h *Handler) handleEmbeddingCachePreProxy(w http.ResponseWriter, r *http.Re
 	misses := make([]embeddingInputMeta, 0, len(inputs))
 
 	// 查询 cache
-	for _, in := range inputs {
-		rec, err := h.storage.GetEmbedding(r.Context(), in.Value, modelName, dimensions)
+	for _, input := range inputs {
+		rec, err := h.storage.GetEmbedding(r.Context(), input.Value, modelName, dimensions)
 		if err != nil {
 			logger.Warn("embedding-cache: storage lookup failed",
 				zap.String("requestId", requestID),
@@ -157,10 +143,10 @@ func (h *Handler) handleEmbeddingCachePreProxy(w http.ResponseWriter, r *http.Re
 			return false, nil
 		}
 		if rec != nil {
-			hits[in.Index] = rec
+			hits[input.Index] = rec
 		} else {
 			// miss: append to misses (preserve original index)
-			misses = append(misses, in)
+			misses = append(misses, input)
 		}
 	}
 
@@ -207,6 +193,26 @@ func (h *Handler) handleEmbeddingCachePreProxy(w http.ResponseWriter, r *http.Re
 	}
 
 	return false, meta
+}
+
+func extractDimensionsField(payload map[string]interface{}) *int {
+	var dimensions *int
+	if dimVal, ok := payload["dimensions"]; ok {
+		switch v := dimVal.(type) {
+		case float64:
+			d := int(v)
+			dimensions = &d
+		case int:
+			d := v
+			dimensions = &d
+		case json.Number:
+			if parsed, err := v.Int64(); err == nil {
+				d := int(parsed)
+				dimensions = &d
+			}
+		}
+	}
+	return dimensions
 }
 
 // extractEmbeddingInputs: 只支持 string 或 []string
@@ -267,12 +273,15 @@ func marshalEmbeddingResponseFromRecords(model string, inputs []embeddingInputMe
 		}
 	}
 	response := embeddingAPIResponse{
-		Object: "list",
-		Data:   data,
-		Model:  model,
+		ID:      strings.ToLower("emb-" + uuid.New().String()),
+		Object:  "list",
+		Created: int(time.Now().Unix()),
+		Data:    data,
+		Model:   model,
 	}
-	if totalTokens > 0 {
-		response.Usage = &embeddingUsage{TotalTokens: &totalTokens}
+	response.Usage = &embeddingUsage{
+		PromptTokens: totalTokens,
+		TotalTokens:  totalTokens,
 	}
 	return json.Marshal(response)
 }
@@ -288,66 +297,43 @@ func (h *Handler) handleEmbeddingCachePostResponse(resp *http.Response, meta *em
 		return nil
 	}
 
-	bodyBytes, err := io.ReadAll(resp.Body)
+	rawBodyBytes, err := utils.ReadResponseBody(resp, meta.requestID)
 	if err != nil {
-		logger.Warn("embedding-cache: failed to read upstream response",
-			zap.String("requestId", meta.requestID),
-			zap.Error(err))
-		return nil
+		return err
 	}
-	_ = resp.Body.Close()
-
-	decompressed := bodyBytes
-	if encoding := resp.Header.Get("Content-Encoding"); encoding != "" {
-		if strings.Contains(strings.ToLower(encoding), "gzip") {
-			gr, err := gzip.NewReader(bytes.NewReader(bodyBytes))
-			if err != nil {
-				logger.Warn("embedding-cache: failed to create gzip reader",
-					zap.String("requestId", meta.requestID),
-					zap.Error(err))
-				return nil
-			}
-			var buf bytes.Buffer
-			if _, err := io.Copy(&buf, gr); err != nil {
-				logger.Warn("embedding-cache: failed to decompress gzip body",
-					zap.String("requestId", meta.requestID),
-					zap.Error(err))
-				_ = gr.Close()
-				return nil
-			}
-			_ = gr.Close()
-			decompressed = buf.Bytes()
-			resp.Header.Del("Content-Encoding")
-		}
-	}
-
 	var payload embeddingAPIResponse
-	if err := json.Unmarshal(decompressed, &payload); err != nil {
+	if err := json.Unmarshal(rawBodyBytes, &payload); err != nil {
 		logger.Warn("embedding-cache: failed to parse upstream response",
 			zap.String("requestId", meta.requestID),
 			zap.Error(err))
-		return nil
+		return err
 	}
 
 	// 保存 upstream 返回的 embeddings（假设 upstream 返回的 data index 是 0..n-1，顺序对应我们发送的 misses）
 	newRecords := make(map[int]*db.EmbeddingRecord) // original index -> record
 	endTime := time.Now()
-	for _, datum := range payload.Data {
-		// datum.Index is index within the returned misses array
-		if datum.Index < 0 || datum.Index >= len(meta.misses) {
+	totalTokens := 0
+	singleRecordTokens := 0
+	if len(payload.Data) == 1 {
+		singleRecordTokens = payload.Usage.TotalTokens
+	}
+	for _, data := range payload.Data {
+		// data.Index is index within the returned misses array
+		if data.Index < 0 || data.Index >= len(meta.misses) {
 			// 忽略异常 index
 			continue
 		}
-		miss := meta.misses[datum.Index] // miss holds original Index and Value
+		miss := meta.misses[data.Index] // miss holds original Index and Value
 		if miss.Value == "" {
 			continue
 		}
 		rec := &db.EmbeddingRecord{
+			RequestID:  meta.requestID,
 			InputText:  miss.Value,
 			ModelName:  meta.model,
-			Embedding:  datum.Embedding,
 			Dimensions: meta.dimensions,
-			RequestID:  meta.requestID,
+			Embedding:  data.Embedding,
+			TokenCount: &singleRecordTokens,
 			StartTime:  &meta.startTime,
 			EndTime:    &endTime,
 		}
@@ -364,7 +350,6 @@ func (h *Handler) handleEmbeddingCachePostResponse(resp *http.Response, meta *em
 
 	// 合并 hits 与 newRecords，按原始顺序输出
 	combined := make([]embeddingResponseDatum, 0, meta.total)
-	totalTokens := 0
 	dataObject := payload.DataObject() // helper from below to pick object (guard)
 	if dataObject == "" {
 		dataObject = "embedding"
@@ -390,18 +375,22 @@ func (h *Handler) handleEmbeddingCachePostResponse(resp *http.Response, meta *em
 		}
 	}
 	// 累加 upstream report 的 token 使用量（如果有）
-	if payload.Usage != nil && payload.Usage.TotalTokens != nil {
-		totalTokens += *payload.Usage.TotalTokens
+	if payload.Usage != nil {
+		totalTokens += payload.Usage.TotalTokens
 	}
 
 	combinedPayload := embeddingAPIResponse{
-		ID:     payload.ID,
-		Object: payload.Object,
-		Model:  firstNonEmpty(payload.Model, meta.model),
-		Data:   combined,
+		ID:      payload.ID,
+		Object:  payload.Object,
+		Created: int(time.Now().Unix()),
+		Model:   firstNonEmpty(payload.Model, meta.model),
+		Data:    combined,
 	}
-	if totalTokens > 0 {
-		combinedPayload.Usage = &embeddingUsage{TotalTokens: &totalTokens}
+	if totalTokens >= 0 {
+		combinedPayload.Usage = &embeddingUsage{
+			PromptTokens: totalTokens,
+			TotalTokens:  totalTokens,
+		}
 	}
 
 	finalBytes, err := json.Marshal(combinedPayload)
