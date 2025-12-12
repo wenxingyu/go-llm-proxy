@@ -374,11 +374,6 @@ func (h *Handler) handleEmbeddingCachePostResponse(resp *http.Response, meta *em
 			totalTokens += *rec.TokenCount
 		}
 	}
-	// 累加 upstream report 的 token 使用量（如果有）
-	if payload.Usage != nil {
-		totalTokens += payload.Usage.TotalTokens
-	}
-
 	combinedPayload := embeddingAPIResponse{
 		ID:      payload.ID,
 		Object:  payload.Object,
